@@ -1,10 +1,12 @@
 "use client";
 
-import { use, useState } from "react";
+import { use, useEffect, useState } from "react";
 import ClueModal from "../../../components/ClueModal";
 import JeopardyBoard from "../../../components/JeopardyBoard";
 import Scoreboard from "../../../components/Scoreboard";
 import StatusBadge from "../../../components/StatusBadge";
+import { createClient } from "../../../utils/supabase/client";
+import type { Board as RawBoard } from "../../../types/board-schema";
 import type { Board, Clue, Player } from "../../../types/game";
 
 interface GamePageProps {
@@ -16,7 +18,9 @@ interface GamePageProps {
 export default function GamePage({ params }: GamePageProps) {
   const { code } = use(params);
   const [players] = useState<Player[]>([]);
-  const [board] = useState<Board | null>(null);
+  const [board, setBoard] = useState<Board | null>(null);
+  const [isLoadingBoard, setIsLoadingBoard] = useState(true);
+  const [boardError, setBoardError] = useState<string | null>(null);
   const [revealedClueIds, setRevealedClueIds] = useState<Set<string>>(
     () => new Set(),
   );
@@ -27,6 +31,75 @@ export default function GamePage({ params }: GamePageProps) {
   } | null>(null);
 
   const currentPlayerId: string | null = null;
+
+  useEffect(() => {
+    const supabase = createClient();
+    let isMounted = true;
+
+    const normalizeBoard = (raw: RawBoard): Board => {
+      return {
+        categories: raw.categories.map((category, categoryIndex) => {
+          const categoryId = `cat-${categoryIndex + 1}`;
+          return {
+            id: categoryId,
+            title: category.title,
+            clues: category.clues.map((clue) => ({
+              id: clue.id,
+              value: clue.value,
+              question: clue.question,
+              answer: clue.answer,
+              categoryId,
+              sourceSnippet: clue.source_snippet,
+            })),
+          };
+        }),
+      };
+    };
+
+    async function loadBoard() {
+      setIsLoadingBoard(true);
+      setBoardError(null);
+
+      const { data: room, error: roomError } = await supabase
+        .from("rooms")
+        .select("id")
+        .eq("code", code)
+        .single();
+
+      if (roomError || !room) {
+        if (isMounted) {
+          setBoardError("Room not found.");
+          setIsLoadingBoard(false);
+        }
+        return;
+      }
+
+      const { data: game, error: gameError } = await supabase
+        .from("games")
+        .select("board_json")
+        .eq("room_id", room.id)
+        .single();
+
+      if (gameError || !game?.board_json) {
+        if (isMounted) {
+          setBoardError("Board not ready yet.");
+          setIsLoadingBoard(false);
+        }
+        return;
+      }
+
+      if (isMounted) {
+        setBoard(normalizeBoard(game.board_json as RawBoard));
+        setIsLoadingBoard(false);
+      }
+    }
+
+    loadBoard();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [code]);
 
   const handleClueSelect = (clue: Clue) => {
     if (revealedClueIds.has(clue.id)) {
@@ -61,9 +134,7 @@ export default function GamePage({ params }: GamePageProps) {
               <StatusBadge label="Playing" />
             </div>
           </div>
-          <div className="text-sm text-slate-300">
-            Round 1 · Board live
-          </div>
+          <div className="text-sm text-slate-300">Round 1 - Board live</div>
         </header>
 
         <section className="grid gap-6 lg:grid-cols-[280px_1fr]">
@@ -74,7 +145,9 @@ export default function GamePage({ params }: GamePageProps) {
           <div className="flex flex-col gap-6">
             {!board ? (
               <div className="rounded-2xl border border-dashed border-slate-700 bg-slate-900/40 p-6 text-sm text-slate-300">
-                Generating board...
+                {isLoadingBoard
+                  ? "Generating board..."
+                  : boardError ?? "Generating board..."}
               </div>
             ) : (
               <JeopardyBoard
