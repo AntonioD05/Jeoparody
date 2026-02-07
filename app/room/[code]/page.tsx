@@ -1,11 +1,14 @@
 "use client";
 
-import { use, useState, useEffect } from "react";
+import { use, useState, useEffect, useRef } from "react";
+import { useRouter } from "next/navigation";
 import HostControls from "../../../components/HostControls";
 import PlayerList from "../../../components/PlayerList";
 import StatusBadge from "../../../components/StatusBadge";
 import { createClient } from "../../../utils/supabase/client";
+import { leaveRoom } from "../../actions/rooms";
 import type { Player } from "../../../types/game";
+import type { RealtimeChannel } from "@supabase/supabase-js";
 
 interface RoomPageProps {
   params: Promise<{
@@ -14,12 +17,31 @@ interface RoomPageProps {
 }
 
 export default function RoomPage({ params }: RoomPageProps) {
+  const router = useRouter();
   const { code } = use(params);
   const [copied, setCopied] = useState(false);
   const [players, setPlayers] = useState<Player[]>([]);
   const [roomId, setRoomId] = useState<string | null>(null);
   const [hostId, setHostId] = useState<string | null>(null);
+  const presenceChannelRef = useRef<RealtimeChannel | null>(null);
   const hasUploadedPdf = false;
+
+  // Handle page unload - attempt to leave room
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      // Use sendBeacon for reliable delivery on page close
+      navigator.sendBeacon(
+        "/api/leave-room",
+        JSON.stringify({ roomCode: code })
+      );
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+
+    return () => {
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+    };
+  }, [code]);
 
   // Fetch room and players on mount
   useEffect(() => {
@@ -103,6 +125,95 @@ export default function RoomPage({ params }: RoomPageProps) {
     };
   }, [roomId, hostId]);
 
+  // Presence tracking - detect when users close their browser/tab
+  useEffect(() => {
+    if (!roomId) return;
+
+    const supabase = createClient();
+    let currentPlayerId: string | null = null;
+
+    async function setupPresence() {
+      // Get current player ID
+      const res = await fetch(`/api/current-player?roomCode=${code}`);
+      if (!res.ok) return;
+
+      const { playerId } = await res.json();
+      currentPlayerId = playerId;
+
+      // Create presence channel
+      const channel = supabase.channel(`room-${roomId}-presence`, {
+        config: { presence: { key: playerId } },
+      });
+
+      channel
+        .on("presence", { event: "leave" }, async ({ leftPresences }) => {
+          // When someone leaves, remove them from the database
+          for (const presence of leftPresences) {
+            const leftPlayerId = presence.player_id;
+            if (!leftPlayerId) continue;
+
+            // Delete the player
+            await supabase.from("players").delete().eq("id", leftPlayerId);
+
+            // Check if room is now empty
+            const { count } = await supabase
+              .from("players")
+              .select("*", { count: "exact", head: true })
+              .eq("room_id", roomId);
+
+            if (count === 0) {
+              // Delete the room if no players left
+              await supabase.from("rooms").delete().eq("id", roomId);
+            }
+          }
+        })
+        .subscribe(async (status) => {
+          if (status === "SUBSCRIBED" && currentPlayerId) {
+            // Track this player's presence
+            await channel.track({ player_id: currentPlayerId });
+          }
+        });
+
+      presenceChannelRef.current = channel;
+    }
+
+    setupPresence();
+
+    return () => {
+      if (presenceChannelRef.current) {
+        supabase.removeChannel(presenceChannelRef.current);
+      }
+    };
+  }, [roomId, code]);
+
+  // Subscribe to room deletion - redirect to home if room is deleted
+  useEffect(() => {
+    if (!roomId) return;
+
+    const supabase = createClient();
+
+    const channel = supabase
+      .channel(`room-${roomId}-deletion`)
+      .on(
+        "postgres_changes",
+        {
+          event: "DELETE",
+          schema: "public",
+          table: "rooms",
+          filter: `id=eq.${roomId}`,
+        },
+        () => {
+          // Room was deleted, redirect to home
+          router.push("/");
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [roomId, router]);
+
   const handleCopy = async () => {
     try {
       if (navigator?.clipboard?.writeText) {
@@ -137,13 +248,23 @@ export default function RoomPage({ params }: RoomPageProps) {
               <StatusBadge label="Lobby" />
             </div>
           </div>
-          <button
-            type="button"
-            onClick={handleCopy}
-            className="rounded-full border border-slate-700 bg-slate-950/60 px-5 py-2 text-xs font-semibold uppercase tracking-[0.3em] text-slate-200 transition hover:border-amber-300 hover:text-amber-200"
-          >
-            {copied ? "Copied!" : "Copy Room Code"}
-          </button>
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={handleCopy}
+              className="rounded-full border border-slate-700 bg-slate-950/60 px-5 py-2 text-xs font-semibold uppercase tracking-[0.3em] text-slate-200 transition hover:border-amber-300 hover:text-amber-200"
+            >
+              {copied ? "Copied!" : "Copy Room Code"}
+            </button>
+            <form action={() => leaveRoom(code)}>
+              <button
+                type="submit"
+                className="rounded-full border border-slate-700 bg-slate-950/60 px-5 py-2 text-xs font-semibold uppercase tracking-[0.3em] text-slate-200 transition hover:border-rose-400 hover:text-rose-200"
+              >
+                Leave Room
+              </button>
+            </form>
+          </div>
         </header>
 
         <section className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">

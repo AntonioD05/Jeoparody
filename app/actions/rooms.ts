@@ -2,6 +2,7 @@
 
 import { createClient } from "../../utils/supabase/server";
 import { redirect } from "next/navigation";
+import { cookies } from "next/headers";
 import { randomUUID } from "crypto";
 
 function generateRoomCode(): string {
@@ -15,6 +16,7 @@ function generateRoomCode(): string {
 
 export async function createRoom(formData: FormData) {
   const supabase = await createClient();
+  const cookieStore = await cookies();
   const hostName = (formData.get("hostName") as string)?.trim() || "Host";
 
   // Try generating a unique code (retry if collision)
@@ -58,6 +60,14 @@ export async function createRoom(formData: FormData) {
       throw new Error(`Failed to create host player: ${playerError.message}`);
     }
 
+    // Store player ID in cookie for this room
+    cookieStore.set(`player_${code}`, hostId, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      maxAge: 60 * 60 * 24, // 24 hours
+    });
+
     // Successfully created room and host
     redirect(`/room/${code}`);
   }
@@ -65,17 +75,21 @@ export async function createRoom(formData: FormData) {
   throw new Error("Failed to generate unique room code after multiple attempts");
 }
 
-export async function joinRoom(formData: FormData) {
+export async function joinRoom(
+  _prevState: { error: string | null },
+  formData: FormData
+): Promise<{ error: string | null }> {
   const supabase = await createClient();
+  const cookieStore = await cookies();
   const playerName = (formData.get("playerName") as string)?.trim();
   const roomCode = (formData.get("roomCode") as string)?.trim().toUpperCase();
 
   if (!playerName) {
-    throw new Error("Name is required");
+    return { error: "Name is required" };
   }
 
   if (!roomCode) {
-    throw new Error("Room code is required");
+    return { error: "Room code is required" };
   }
 
   // Look up the room by code
@@ -86,11 +100,11 @@ export async function joinRoom(formData: FormData) {
     .single();
 
   if (roomError || !room) {
-    throw new Error("Room not found. Please check the code and try again.");
+    return { error: "Room not found. Please check the code and try again." };
   }
 
   if (room.status === "finished") {
-    throw new Error("This game has already ended.");
+    return { error: "This game has already ended." };
   }
 
   // Check if player name is already taken in this room
@@ -102,20 +116,89 @@ export async function joinRoom(formData: FormData) {
     .single();
 
   if (existingPlayer) {
-    throw new Error("A player with this name is already in the room.");
+    return { error: "A player with this name is already in the room." };
   }
 
   // Insert the new player
+  const playerId = randomUUID();
   const { error: playerError } = await supabase.from("players").insert({
-    id: randomUUID(),
+    id: playerId,
     room_id: room.id,
     name: playerName,
     score: 0,
   });
 
   if (playerError) {
-    throw new Error(`Failed to join room: ${playerError.message}`);
+    return { error: `Failed to join room: ${playerError.message}` };
   }
 
+  // Store player ID in cookie for this room
+  cookieStore.set(`player_${roomCode}`, playerId, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    maxAge: 60 * 60 * 24, // 24 hours
+  });
+
   redirect(`/room/${roomCode}`);
+}
+
+export async function leaveRoom(roomCode: string) {
+  const supabase = await createClient();
+  const cookieStore = await cookies();
+
+  const playerId = cookieStore.get(`player_${roomCode}`)?.value;
+
+  if (!playerId) {
+    // No player cookie, just redirect
+    redirect("/");
+  }
+
+  // Get the room first
+  const { data: room } = await supabase
+    .from("rooms")
+    .select("id, host_id")
+    .eq("code", roomCode)
+    .single();
+
+  if (!room) {
+    // Room doesn't exist, clear cookie and redirect
+    cookieStore.delete(`player_${roomCode}`);
+    redirect("/");
+  }
+
+  // Delete the player
+  await supabase.from("players").delete().eq("id", playerId);
+
+  // Check if any players remain in the room
+  const { count } = await supabase
+    .from("players")
+    .select("*", { count: "exact", head: true })
+    .eq("room_id", room.id);
+
+  // If no players remain, delete the room
+  if (count === 0) {
+    await supabase.from("rooms").delete().eq("id", room.id);
+  } else if (room.host_id === playerId) {
+    // If the host left but players remain, assign a new host
+    const { data: newHost } = await supabase
+      .from("players")
+      .select("id")
+      .eq("room_id", room.id)
+      .order("joined_at", { ascending: true })
+      .limit(1)
+      .single();
+
+    if (newHost) {
+      await supabase
+        .from("rooms")
+        .update({ host_id: newHost.id })
+        .eq("id", room.id);
+    }
+  }
+
+  // Clear the player cookie
+  cookieStore.delete(`player_${roomCode}`);
+
+  redirect("/");
 }
