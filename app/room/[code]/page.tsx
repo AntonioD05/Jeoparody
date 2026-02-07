@@ -30,23 +30,7 @@ export default function RoomPage({ params }: RoomPageProps) {
   const [error, setError] = useState<string | null>(null);
   const [board, setBoard] = useState<Board | null>(null);
   const [manualRoomId, setManualRoomId] = useState("");
-
-  // Handle page unload - attempt to leave room
-  useEffect(() => {
-    const handleBeforeUnload = () => {
-      // Use sendBeacon for reliable delivery on page close
-      navigator.sendBeacon(
-        "/api/leave-room",
-        JSON.stringify({ roomCode: code })
-      );
-    };
-
-    window.addEventListener("beforeunload", handleBeforeUnload);
-
-    return () => {
-      window.removeEventListener("beforeunload", handleBeforeUnload);
-    };
-  }, [code]);
+  const [hostLeft, setHostLeft] = useState(false);
 
   // Fetch room and players on mount
   useEffect(() => {
@@ -152,23 +136,24 @@ export default function RoomPage({ params }: RoomPageProps) {
 
       channel
         .on("presence", { event: "leave" }, async ({ leftPresences }) => {
-          // When someone leaves, remove them from the database
+          // When someone leaves, handle cleanup
           for (const presence of leftPresences) {
             const leftPlayerId = presence.player_id;
             if (!leftPlayerId) continue;
 
-            // Delete the player
-            await supabase.from("players").delete().eq("id", leftPlayerId);
+            // Check if the leaving player was the host
+            const { data: room } = await supabase
+              .from("rooms")
+              .select("host_id")
+              .eq("id", roomId)
+              .single();
 
-            // Check if room is now empty
-            const { count } = await supabase
-              .from("players")
-              .select("*", { count: "exact", head: true })
-              .eq("room_id", roomId);
-
-            if (count === 0) {
-              // Delete the room if no players left
+            if (room?.host_id === leftPlayerId) {
+              // Host left - delete the room (cascade deletes all players)
               await supabase.from("rooms").delete().eq("id", roomId);
+            } else {
+              // Non-host left - just delete that player
+              await supabase.from("players").delete().eq("id", leftPlayerId);
             }
           }
         })
@@ -208,8 +193,11 @@ export default function RoomPage({ params }: RoomPageProps) {
           filter: `id=eq.${roomId}`,
         },
         () => {
-          // Room was deleted, redirect to home
-          router.push("/");
+          // Room was deleted (host left), show message then redirect
+          setHostLeft(true);
+          setTimeout(() => {
+            router.push("/");
+          }, 3000);
         }
       )
       .subscribe();
@@ -300,6 +288,32 @@ export default function RoomPage({ params }: RoomPageProps) {
 
   return (
     <div className="min-h-screen bg-slate-950 px-6 py-12 text-white">
+      {hostLeft && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/90 backdrop-blur-sm">
+          <div className="mx-4 max-w-md rounded-2xl border border-rose-500/50 bg-slate-900 p-8 text-center shadow-2xl">
+            <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-rose-500/20">
+              <svg
+                className="h-8 w-8 text-rose-400"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"
+                />
+              </svg>
+            </div>
+            <h2 className="text-xl font-bold text-white">Host Left the Room</h2>
+            <p className="mt-2 text-slate-400">
+              The host has left and the room has been closed. You will be redirected to the home page shortly.
+            </p>
+            <div className="mt-4 text-sm text-slate-500">Redirecting in 3 seconds...</div>
+          </div>
+        </div>
+      )}
       <main className="mx-auto flex w-full max-w-6xl flex-col gap-8">
         <header className="flex flex-col gap-4 rounded-3xl border border-slate-800 bg-gradient-to-br from-slate-900 via-slate-950 to-slate-900 p-6 md:flex-row md:items-center md:justify-between">
           <div className="space-y-2">
