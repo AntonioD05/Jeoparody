@@ -34,3 +34,33 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+
+## API: Generate Board
+
+`POST /api/generate-board`
+
+Generates a Jeopardy-style board from extracted PDF chunks using Gemini. The response includes a strict 5x5 board and persists it to Supabase.
+
+### Example request body
+
+```json
+{
+  "roomId": "00000000-0000-0000-0000-000000000000",
+  "chunks": [
+    "Chunk one text...",
+    "Chunk two text..."
+  ],
+  "options": {
+    "model": "gemini-1.5-flash",
+    "difficulty": "medium"
+  }
+}
+```
+
+### Example curl
+
+```bash
+curl -X POST http://localhost:3000/api/generate-board \
+  -H "Content-Type: application/json" \
+  -d '{"roomId":"00000000-0000-0000-0000-000000000000","chunks":["Chunk one text..."],"options":{"difficulty":"medium"}}'
+```

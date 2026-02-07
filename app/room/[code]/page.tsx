@@ -9,6 +9,7 @@ import { createClient } from "../../../utils/supabase/client";
 import { leaveRoom } from "../../actions/rooms";
 import type { Player } from "../../../types/game";
 import type { RealtimeChannel } from "@supabase/supabase-js";
+import type { Board } from "../../../types/board-schema";
 
 interface RoomPageProps {
   params: Promise<{
@@ -24,7 +25,11 @@ export default function RoomPage({ params }: RoomPageProps) {
   const [roomId, setRoomId] = useState<string | null>(null);
   const [hostId, setHostId] = useState<string | null>(null);
   const presenceChannelRef = useRef<RealtimeChannel | null>(null);
-  const hasUploadedPdf = false;
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [board, setBoard] = useState<Board | null>(null);
+  const [manualRoomId, setManualRoomId] = useState("");
 
   // Handle page unload - attempt to leave room
   useEffect(() => {
@@ -233,6 +238,66 @@ export default function RoomPage({ params }: RoomPageProps) {
     }
   };
 
+  useEffect(() => {
+    if (!manualRoomId && roomId) {
+      setManualRoomId(roomId);
+    }
+  }, [manualRoomId, roomId]);
+
+  const handleGenerateBoard = async () => {
+    if (!selectedFile) {
+      setError("Please choose a PDF to upload.");
+      return;
+    }
+
+    if (!manualRoomId.trim()) {
+      setError("Please enter the room UUID.");
+      return;
+    }
+
+    setError(null);
+    setIsGenerating(true);
+    setBoard(null);
+
+    try {
+      const formData = new FormData();
+      formData.append("file", selectedFile);
+
+      const extractResponse = await fetch("/api/extract", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!extractResponse.ok) {
+        const extractError = await extractResponse.json();
+        throw new Error(extractError?.error || "PDF extraction failed.");
+      }
+
+      const extractJson = await extractResponse.json();
+
+      const generateResponse = await fetch("/api/generate-board", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          roomId: manualRoomId.trim(),
+          chunks: extractJson.chunks ?? [],
+        }),
+      });
+
+      if (!generateResponse.ok) {
+        const generateError = await generateResponse.json();
+        throw new Error(generateError?.error || "Board generation failed.");
+      }
+
+      await generateResponse.json();
+      router.push(`/game/${code}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Something went wrong.");
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-slate-950 px-6 py-12 text-white">
       <main className="mx-auto flex w-full max-w-6xl flex-col gap-8">
@@ -271,9 +336,16 @@ export default function RoomPage({ params }: RoomPageProps) {
           <PlayerList players={players} />
           <div className="flex flex-col gap-4">
             <HostControls
-              canStart={hasUploadedPdf}
-              onUpload={() => {}}
-              onStart={() => {}}
+              canStart={Boolean(selectedFile) && Boolean(manualRoomId.trim())}
+              onStart={handleGenerateBoard}
+              onFileSelect={setSelectedFile}
+              fileName={selectedFile?.name ?? null}
+              isGenerating={isGenerating}
+              error={error}
+              roomId={manualRoomId}
+              onRoomIdChange={
+                roomId ? undefined : (value) => setManualRoomId(value)
+              }
             />
             <div className="rounded-2xl border border-dashed border-slate-700 bg-slate-900/40 p-5 text-sm text-slate-300">
               <p className="font-semibold text-white">Next steps</p>
@@ -282,13 +354,41 @@ export default function RoomPage({ params }: RoomPageProps) {
                 when everyone is ready.
               </p>
             </div>
-            {!hasUploadedPdf ? (
+            {!selectedFile ? (
               <div className="rounded-2xl border border-amber-400/30 bg-amber-400/10 p-4 text-sm text-amber-100">
                 Waiting for host to upload a PDF.
               </div>
             ) : null}
           </div>
         </section>
+        {board ? (
+          <section className="rounded-3xl border border-slate-800 bg-slate-900/60 p-6">
+            <h2 className="text-lg font-semibold text-white">Generated Board</h2>
+            <div className="mt-4 grid grid-cols-5 gap-3 text-center text-xs font-semibold uppercase tracking-[0.15em] text-slate-200">
+              {board.categories.map((category) => (
+                <div
+                  key={category.title}
+                  className="rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-3"
+                >
+                  {category.title}
+                </div>
+              ))}
+            </div>
+            <div className="mt-3 grid grid-cols-5 gap-3">
+              {board.categories.flatMap((category) =>
+                category.clues.map((clue) => (
+                  <button
+                    key={clue.id}
+                    type="button"
+                    className="min-h-[72px] rounded-xl border border-amber-400/30 bg-amber-400/10 text-sm font-semibold text-amber-100"
+                  >
+                    ${clue.value}
+                  </button>
+                )),
+              )}
+            </div>
+          </section>
+        ) : null}
       </main>
     </div>
   );
