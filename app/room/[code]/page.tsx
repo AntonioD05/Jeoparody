@@ -1,35 +1,115 @@
 "use client";
 
-import { useState } from "react";
+import { use, useState, useEffect } from "react";
 import HostControls from "../../../components/HostControls";
 import PlayerList from "../../../components/PlayerList";
 import StatusBadge from "../../../components/StatusBadge";
+import { createClient } from "../../../utils/supabase/client";
 import type { Player } from "../../../types/game";
 
 interface RoomPageProps {
-  params: {
+  params: Promise<{
     code: string;
-  };
+  }>;
 }
 
-const mockPlayers: Player[] = [
-  { id: "p1", name: "Alex Chen", isHost: true },
-  { id: "p2", name: "Sam Rivera" },
-  { id: "p3", name: "Jordan Patel" },
-  { id: "p4", name: "Taylor Brooks" },
-];
-
 export default function RoomPage({ params }: RoomPageProps) {
+  const { code } = use(params);
   const [copied, setCopied] = useState(false);
+  const [players, setPlayers] = useState<Player[]>([]);
+  const [roomId, setRoomId] = useState<string | null>(null);
+  const [hostId, setHostId] = useState<string | null>(null);
   const hasUploadedPdf = false;
+
+  // Fetch room and players on mount
+  useEffect(() => {
+    const supabase = createClient();
+
+    async function fetchRoomAndPlayers() {
+      // Get room by code
+      const { data: room } = await supabase
+        .from("rooms")
+        .select("id, host_id")
+        .eq("code", code)
+        .single();
+
+      if (!room) return;
+
+      setRoomId(room.id);
+      setHostId(room.host_id);
+
+      // Fetch players for this room
+      const { data: playersData } = await supabase
+        .from("players")
+        .select("id, name, score")
+        .eq("room_id", room.id)
+        .order("joined_at", { ascending: true });
+
+      if (playersData) {
+        setPlayers(
+          playersData.map((p) => ({
+            id: p.id,
+            name: p.name,
+            score: p.score ?? 0,
+            isHost: p.id === room.host_id,
+          }))
+        );
+      }
+    }
+
+    fetchRoomAndPlayers();
+  }, [code]);
+
+  // Subscribe to realtime player changes
+  useEffect(() => {
+    if (!roomId) return;
+
+    const supabase = createClient();
+
+    const channel = supabase
+      .channel(`room-${roomId}-players`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "players",
+          filter: `room_id=eq.${roomId}`,
+        },
+        async () => {
+          // Refetch all players on any change
+          const { data: playersData } = await supabase
+            .from("players")
+            .select("id, name, score")
+            .eq("room_id", roomId)
+            .order("joined_at", { ascending: true });
+
+          if (playersData) {
+            setPlayers(
+              playersData.map((p) => ({
+                id: p.id,
+                name: p.name,
+                score: p.score ?? 0,
+                isHost: p.id === hostId,
+              }))
+            );
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [roomId, hostId]);
 
   const handleCopy = async () => {
     try {
       if (navigator?.clipboard?.writeText) {
-        await navigator.clipboard.writeText(params.code);
+        await navigator.clipboard.writeText(code);
       } else {
         const temp = document.createElement("textarea");
-        temp.value = params.code;
+        temp.value = code;
         document.body.appendChild(temp);
         temp.select();
         document.execCommand("copy");
@@ -52,7 +132,7 @@ export default function RoomPage({ params }: RoomPageProps) {
             </p>
             <div className="flex flex-wrap items-center gap-3">
               <h1 className="text-2xl font-semibold text-white md:text-3xl">
-                Room {params.code}
+                Room {code}
               </h1>
               <StatusBadge label="Lobby" />
             </div>
@@ -67,7 +147,7 @@ export default function RoomPage({ params }: RoomPageProps) {
         </header>
 
         <section className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
-          <PlayerList players={mockPlayers} />
+          <PlayerList players={players} />
           <div className="flex flex-col gap-4">
             <HostControls
               canStart={hasUploadedPdf}

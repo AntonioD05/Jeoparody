@@ -1,23 +1,6 @@
-"use client";
-
-import { useRouter } from "next/navigation";
-import { useState, type FormEvent } from "react";
-import Link from "next/link";
+import { createRoom, joinRoom } from "./actions/rooms";
 
 export default function Home() {
-  const router = useRouter();
-  const [name, setName] = useState("");
-  const [code, setCode] = useState("");
-
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const trimmedCode = code.trim();
-    if (!trimmedCode) {
-      return;
-    }
-    router.push(`/room/${encodeURIComponent(trimmedCode)}`);
-  };
-
   return (
     <div className="min-h-screen bg-slate-950 px-6 py-16 text-white">
       <main className="mx-auto flex w-full max-w-5xl flex-col gap-12">
@@ -43,12 +26,24 @@ export default function Home() {
                 code.
               </p>
             </div>
-            <Link
-              href="/room/new"
-              className="mt-6 inline-flex items-center justify-center rounded-full bg-slate-50 px-5 py-3 text-sm font-semibold text-slate-900 transition hover:bg-white"
-            >
-              Create a room
-            </Link>
+            <form action={createRoom} className="mt-6 space-y-4">
+              <label className="block text-sm font-medium text-slate-200">
+                Your name
+                <input
+                  type="text"
+                  name="hostName"
+                  placeholder="Alex"
+                  className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-slate-100 placeholder:text-slate-500 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-500/40"
+                  required
+                />
+              </label>
+              <button
+                type="submit"
+                className="inline-flex w-full items-center justify-center rounded-full bg-slate-50 px-5 py-3 text-sm font-semibold text-slate-900 transition hover:bg-white"
+              >
+                Create a room
+              </button>
+            </form>
           </div>
 
           <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6 shadow-lg shadow-slate-950/40">
@@ -58,13 +53,12 @@ export default function Home() {
                 Enter your name and the room code to jump into the action.
               </p>
             </div>
-            <form onSubmit={handleSubmit} className="mt-6 space-y-4">
+            <form action={joinRoom} className="mt-6 space-y-4">
               <label className="block text-sm font-medium text-slate-200">
                 Name
                 <input
                   type="text"
-                  value={name}
-                  onChange={(event) => setName(event.target.value)}
+                  name="playerName"
                   placeholder="Alex"
                   className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-slate-100 placeholder:text-slate-500 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-500/40"
                   required
@@ -74,8 +68,7 @@ export default function Home() {
                 Room code
                 <input
                   type="text"
-                  value={code}
-                  onChange={(event) => setCode(event.target.value)}
+                  name="roomCode"
                   placeholder="QUIZ123"
                   className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-slate-100 placeholder:text-slate-500 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-500/40"
                   required
