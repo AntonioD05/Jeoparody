@@ -22,15 +22,30 @@ export async function generateJsonWithGemini(
   const ai = new GoogleGenAI({ apiKey });
   const modelCandidates = options.model
     ? [options.model]
-    : ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-flash-latest"];
+    : [
+        "gemini-3-flash-preview",
+        "gemini-2.5-flash",
+        "gemini-2.5-flash-lite",
+      ];
 
   let lastError: unknown;
   let response;
 
+  const shouldFallback = (error: unknown) => {
+    if (!error || typeof error !== "object") return false;
+    const status = (error as { status?: number }).status;
+    const message = (error as { message?: string }).message ?? "";
+    if (status === 404 || status === 429) return true;
+    if (message.includes("NOT_FOUND") || message.includes("RESOURCE_EXHAUSTED")) {
+      return true;
+    }
+    return false;
+  };
+
   for (const model of modelCandidates) {
     try {
       response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
+        model,
         contents: prompt,
         config: {
           temperature: options.temperature ?? 0.4,
@@ -41,6 +56,9 @@ export async function generateJsonWithGemini(
       break;
     } catch (error) {
       lastError = error;
+      if (!shouldFallback(error)) {
+        break;
+      }
     }
   }
 

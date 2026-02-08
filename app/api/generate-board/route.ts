@@ -115,10 +115,23 @@ const parseBoardCandidate = (rawText: string) => {
   const jsonText = extractJsonFromText(rawText);
   const parsed = JSON.parse(jsonText);
   if (parsed && typeof parsed === "object" && "board" in parsed) {
-    return (parsed as { board: unknown }).board;
+    const inner = (parsed as { board: unknown }).board;
+    if (Array.isArray(inner)) {
+      return { categories: inner };
+    }
+    if (inner && typeof inner === "object" && !("categories" in (inner as Record<string, unknown>))) {
+      return { categories: Object.values(inner as Record<string, unknown>) };
+    }
+    return inner;
   }
   if (Array.isArray(parsed)) {
     return { categories: parsed };
+  }
+  if (parsed && typeof parsed === "object" && !("categories" in parsed)) {
+    const values = Object.values(parsed as Record<string, unknown>);
+    if (values.length > 0) {
+      return { categories: values };
+    }
   }
   if (parsed && typeof parsed === "object" && "categories" in parsed) {
     return parsed;
@@ -147,6 +160,12 @@ const normalizeBoardCandidate = (candidate: unknown) => {
       return {
         ...category,
         title: category.category,
+      };
+    }
+    if ("name" in category) {
+      return {
+        ...category,
+        title: category.name,
       };
     }
     return category;
@@ -210,7 +229,7 @@ export async function POST(request: NextRequest) {
     const { error: gameError } = await supabase
       .from("games")
       .upsert(
-        { room_id: roomId, board_json: board, state: "playing" },
+        { room_id: roomId, board_json: board, phase: "playing" },
         { onConflict: "room_id" },
       );
 
