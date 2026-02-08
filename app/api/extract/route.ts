@@ -98,12 +98,14 @@ export async function POST(request: NextRequest) {
     let extractedText = "";
     let pages: number | undefined;
 
+    // Try pdfjs-dist first (more reliable in serverless environments)
     try {
-      const result = await extractWithPdfParse(buffer);
+      const result = await extractWithPdfJs(buffer);
       extractedText = result.text;
       pages = result.pages;
     } catch {
-      const result = await extractWithPdfJs(buffer);
+      // Fallback to pdf-parse (may fail on some serverless platforms)
+      const result = await extractWithPdfParse(buffer);
       extractedText = result.text;
       pages = result.pages;
     }
