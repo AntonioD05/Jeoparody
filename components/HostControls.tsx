@@ -9,6 +9,7 @@ type HostControlsProps = {
   error?: string | null;
   roomId?: string | null;
   onRoomIdChange?: (value: string) => void;
+  progress?: { stage: string; percent: number } | null;
 };
 
 export default function HostControls({
@@ -20,6 +21,7 @@ export default function HostControls({
   error,
   roomId,
   onRoomIdChange,
+  progress,
 }: HostControlsProps) {
   return (
     <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6">
@@ -44,12 +46,30 @@ export default function HostControls({
             onChange={(event) =>
               onFileSelect(event.target.files?.[0] ?? null)
             }
-            className="rounded-xl border border-slate-700 bg-slate-950/60 px-3 py-2 text-sm text-white file:mr-3 file:rounded-lg file:border-0 file:bg-slate-800 file:px-3 file:py-1 file:text-xs file:font-semibold file:text-slate-100"
+            disabled={isGenerating}
+            className="rounded-xl border border-slate-700 bg-slate-950/60 px-3 py-2 text-sm text-white file:mr-3 file:rounded-lg file:border-0 file:bg-slate-800 file:px-3 file:py-1 file:text-xs file:font-semibold file:text-slate-100 disabled:opacity-50"
           />
         </label>
-        {fileName ? (
+        {fileName && !isGenerating ? (
           <p className="text-xs text-slate-400">Selected: {fileName}</p>
         ) : null}
+        
+        {/* Progress bar */}
+        {isGenerating && progress ? (
+          <div className="space-y-2">
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-amber-200">{progress.stage}</span>
+              <span className="text-slate-400">{progress.percent}%</span>
+            </div>
+            <div className="h-2 w-full overflow-hidden rounded-full bg-slate-800">
+              <div
+                className="h-full rounded-full bg-gradient-to-r from-amber-500 to-amber-400 transition-all duration-500 ease-out"
+                style={{ width: `${progress.percent}%` }}
+              />
+            </div>
+          </div>
+        ) : null}
+        
         <button
           type="button"
           onClick={onStart}

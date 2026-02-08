@@ -29,6 +29,7 @@ export default function RoomPage({ params }: RoomPageProps) {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [generationProgress, setGenerationProgress] = useState<{ stage: string; percent: number } | null>(null);
   const [board, setBoard] = useState<Board | null>(null);
   const [manualRoomId, setManualRoomId] = useState("");
   const [hostLeft, setHostLeft] = useState(false);
@@ -440,10 +441,20 @@ export default function RoomPage({ params }: RoomPageProps) {
     setError(null);
     setIsGenerating(true);
     setBoard(null);
+    setGenerationProgress({ stage: "Extracting PDF...", percent: 5 });
 
     try {
       // Extract PDF text client-side (avoids Vercel's 4.5MB request limit)
       const extractResult = await extractPdfText(selectedFile);
+      setGenerationProgress({ stage: "PDF extracted, sending to AI...", percent: 20 });
+
+      // Start simulated progress for AI generation
+      let simulatedPercent = 20;
+      const progressInterval = setInterval(() => {
+        simulatedPercent += Math.random() * 3 + 1; // Random increment between 1-4%
+        if (simulatedPercent > 90) simulatedPercent = 90; // Cap at 90% until done
+        setGenerationProgress({ stage: "AI is generating questions...", percent: Math.round(simulatedPercent) });
+      }, 800);
 
       const generateResponse = await fetch("/api/generate-board", {
         method: "POST",
@@ -454,15 +465,20 @@ export default function RoomPage({ params }: RoomPageProps) {
         }),
       });
 
+      clearInterval(progressInterval);
+
       if (!generateResponse.ok) {
         const generateError = await generateResponse.json();
         throw new Error(generateError?.error || "Board generation failed.");
       }
 
+      setGenerationProgress({ stage: "Saving board...", percent: 95 });
       await generateResponse.json();
+      setGenerationProgress({ stage: "Done! Starting game...", percent: 100 });
       router.push(`/game/${code}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong.");
+      setGenerationProgress(null);
     } finally {
       setIsGenerating(false);
     }
@@ -588,6 +604,7 @@ export default function RoomPage({ params }: RoomPageProps) {
                 onRoomIdChange={
                   roomId ? undefined : (value) => setManualRoomId(value)
                 }
+                progress={generationProgress}
               />
             ) : (
               <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6">
