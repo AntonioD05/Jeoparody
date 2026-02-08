@@ -14,7 +14,10 @@ function generateRoomCode(): string {
   return code;
 }
 
-export async function createRoom(formData: FormData) {
+export async function createRoom(
+  _prevState: { error: string | null },
+  formData: FormData
+): Promise<{ error: string | null }> {
   const supabase = await createClient();
   const cookieStore = await cookies();
   const hostName = (formData.get("hostName") as string)?.trim() || "Host";
@@ -43,7 +46,7 @@ export async function createRoom(formData: FormData) {
         attempts++;
         continue;
       }
-      throw new Error(`Failed to create room: ${roomError.message}`);
+      return { error: `Failed to create room: ${roomError.message}` };
     }
 
     // Insert the host player
@@ -57,7 +60,7 @@ export async function createRoom(formData: FormData) {
     if (playerError) {
       // Cleanup the room if player creation fails
       await supabase.from("rooms").delete().eq("id", roomId);
-      throw new Error(`Failed to create host player: ${playerError.message}`);
+      return { error: `Failed to create host player: ${playerError.message}` };
     }
 
     // Store player ID in cookie for this room
@@ -72,7 +75,7 @@ export async function createRoom(formData: FormData) {
     redirect(`/room/${code}`);
   }
 
-  throw new Error("Failed to generate unique room code after multiple attempts");
+  return { error: "Failed to generate unique room code after multiple attempts" };
 }
 
 export async function joinRoom(
