@@ -226,10 +226,35 @@ export async function POST(request: NextRequest) {
     const board = validation.data;
     const supabase = createServerSupabaseClient();
 
+    // Get the first player (by joined_at) to be the first turn player
+    const { data: firstPlayer, error: playerError } = await supabase
+      .from("players")
+      .select("id")
+      .eq("room_id", roomId)
+      .order("joined_at", { ascending: true })
+      .limit(1)
+      .single();
+
+    if (playerError || !firstPlayer) {
+      return Response.json(
+        { error: "No players in room.", details: playerError?.message },
+        { status: 400 },
+      );
+    }
+
+    // Initialize the game with full state
     const { error: gameError } = await supabase
       .from("games")
       .upsert(
-        { room_id: roomId, board_json: board, phase: "playing" },
+        {
+          room_id: roomId,
+          board_json: board,
+          phase: "selecting",
+          turn_player_id: firstPlayer.id,
+          revealed_ids: [],
+          selected_clue_id: null,
+          last_result: null,
+        },
         { onConflict: "room_id" },
       );
 

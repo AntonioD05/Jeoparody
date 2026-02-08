@@ -222,7 +222,7 @@ export default function RoomPage({ params }: RoomPageProps) {
         
         // Collect all player IDs currently in presence
         for (const presences of Object.values(presenceState)) {
-          for (const presence of presences as { player_id: string }[]) {
+          for (const presence of presences as unknown as { player_id?: string }[]) {
             if (presence.player_id) {
               presentPlayerIds.add(presence.player_id);
             }
@@ -282,7 +282,7 @@ export default function RoomPage({ params }: RoomPageProps) {
               const presenceState = channel.presenceState();
               const isStillPresent = Object.values(presenceState).some(
                 (presences) =>
-                  (presences as { player_id: string }[]).some(
+                  (presences as unknown as { player_id?: string }[]).some(
                     (p) => p.player_id === leftPlayerId
                   )
               );
