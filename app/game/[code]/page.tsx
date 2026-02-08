@@ -438,6 +438,13 @@ export default function GamePage({ params }: GamePageProps) {
     speakResult(announcement);
   }, [gameState.phase, gameState.lastResult, board, speakResult, isMuted]);
 
+  // Stop voiceover when phase changes away from revealing (e.g., when another player clicks continue)
+  useEffect(() => {
+    if (gameState.phase !== "revealing") {
+      stopResult();
+    }
+  }, [gameState.phase, stopResult]);
+
   // Play Final Jeopardy music during final jeopardy phases
   useEffect(() => {
     const isFinalJeopardyPhase = 
