@@ -58,8 +58,8 @@ export async function extractPdfText(file: File): Promise<ExtractionResult> {
   // Dynamically import pdfjs-dist for client-side use
   const pdfjs = await import("pdfjs-dist");
   
-  // Set up the worker
-  pdfjs.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.js`;
+  // Set up the worker using unpkg which has all versions
+  pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
 
   const arrayBuffer = await file.arrayBuffer();
   const loadingTask = pdfjs.getDocument({ data: arrayBuffer });
