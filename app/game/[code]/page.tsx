@@ -182,6 +182,37 @@ export default function GamePage({ params }: GamePageProps) {
 
     const supabase = createClient();
 
+    // Helper to refetch full game state
+    const refetchGameState = async () => {
+      const { data: game } = await supabase
+        .from("games")
+        .select("phase, turn_player_id, revealed_ids, selected_clue_id, last_result")
+        .eq("room_id", roomId)
+        .single();
+
+      if (game) {
+        setGameState({
+          phase: (game.phase as GamePhase) ?? "selecting",
+          turnPlayerId: game.turn_player_id,
+          revealedIds: (game.revealed_ids as string[]) ?? [],
+          selectedClueId: game.selected_clue_id,
+          lastResult: game.last_result as LastResult | null,
+        });
+
+        // Update modal state based on phase
+        if (game.phase === "answering" && game.selected_clue_id && board) {
+          const foundClue = board.categories
+            .flatMap((cat) => cat.clues)
+            .find((c) => c.id === game.selected_clue_id);
+          if (foundClue) {
+            setSelectedClue(foundClue);
+          }
+        } else if (game.phase !== "answering") {
+          setSelectedClue(null);
+        }
+      }
+    };
+
     const channel = supabase
       .channel(`game-${roomId}`)
       .on(
@@ -201,13 +232,14 @@ export default function GamePage({ params }: GamePageProps) {
             last_result?: LastResult | null;
           };
 
-          setGameState((prev) => ({
-            phase: (newGame.phase as GamePhase) ?? prev.phase,
-            turnPlayerId: newGame.turn_player_id ?? prev.turnPlayerId,
-            revealedIds: newGame.revealed_ids ?? prev.revealedIds,
-            selectedClueId: newGame.selected_clue_id ?? prev.selectedClueId,
-            lastResult: newGame.last_result ?? prev.lastResult,
-          }));
+          // Handle nulls properly - turn_player_id and selected_clue_id can be legitimately null
+          setGameState({
+            phase: (newGame.phase as GamePhase) ?? "selecting",
+            turnPlayerId: newGame.turn_player_id ?? null,
+            revealedIds: newGame.revealed_ids ?? [],
+            selectedClueId: newGame.selected_clue_id ?? null,
+            lastResult: (newGame.last_result as LastResult) ?? null,
+          });
 
           // If we're in answering phase, show the clue modal for all players
           if (newGame.phase === "answering" && newGame.selected_clue_id && board) {
@@ -226,7 +258,12 @@ export default function GamePage({ params }: GamePageProps) {
           }
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        // Refetch when subscription is established to ensure we have latest state
+        if (status === "SUBSCRIBED") {
+          refetchGameState();
+        }
+      });
 
     return () => {
       supabase.removeChannel(channel);
@@ -239,6 +276,25 @@ export default function GamePage({ params }: GamePageProps) {
 
     const supabase = createClient();
 
+    const refetchPlayers = async () => {
+      const { data: playersData } = await supabase
+        .from("players")
+        .select("id, name, score")
+        .eq("room_id", roomId)
+        .order("joined_at", { ascending: true });
+
+      if (playersData) {
+        setPlayers(
+          playersData.map((p) => ({
+            id: p.id,
+            name: p.name,
+            score: p.score ?? 0,
+            isHost: p.id === hostId,
+          }))
+        );
+      }
+    };
+
     const channel = supabase
       .channel(`game-${roomId}-players`)
       .on(
@@ -249,27 +305,17 @@ export default function GamePage({ params }: GamePageProps) {
           table: "players",
           filter: `room_id=eq.${roomId}`,
         },
-        async () => {
-          // Refetch all players
-          const { data: playersData } = await supabase
-            .from("players")
-            .select("id, name, score")
-            .eq("room_id", roomId)
-            .order("joined_at", { ascending: true });
-
-          if (playersData) {
-            setPlayers(
-              playersData.map((p) => ({
-                id: p.id,
-                name: p.name,
-                score: p.score ?? 0,
-                isHost: p.id === hostId,
-              }))
-            );
-          }
+        () => {
+          // Refetch all players on any change
+          refetchPlayers();
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        // Also refetch when subscription is established
+        if (status === "SUBSCRIBED") {
+          refetchPlayers();
+        }
+      });
 
     return () => {
       supabase.removeChannel(channel);
@@ -369,6 +415,32 @@ export default function GamePage({ params }: GamePageProps) {
 
     if (result.error) {
       setActionError(result.error);
+    } else {
+      // Optimistically update local state
+      const pointsDelta = isCorrect ? clue.value : -clue.value;
+      
+      setGameState((prev) => ({
+        ...prev,
+        phase: "revealing",
+        revealedIds: [...prev.revealedIds, clue.id],
+        lastResult: {
+          clueId: clue.id,
+          playerId: currentPlayerId!,
+          playerName: players.find((p) => p.id === currentPlayerId)?.name ?? "You",
+          isCorrect,
+          pointsDelta,
+          answer,
+        },
+      }));
+
+      // Update player scores locally
+      setPlayers((prev) =>
+        prev.map((p) =>
+          p.id === currentPlayerId
+            ? { ...p, score: (p.score ?? 0) + pointsDelta }
+            : p
+        )
+      );
     }
 
     setIsSubmitting(false);
@@ -383,6 +455,27 @@ export default function GamePage({ params }: GamePageProps) {
 
     if (result.error) {
       setActionError(result.error);
+    } else {
+      // Optimistically update local state
+      const lastResult = gameState.lastResult;
+      let nextTurnPlayerId = gameState.turnPlayerId;
+
+      if (lastResult?.isCorrect) {
+        // Correct answer: same player picks again
+        nextTurnPlayerId = gameState.turnPlayerId;
+      } else {
+        // Wrong answer: rotate to next player
+        const currentIndex = players.findIndex((p) => p.id === gameState.turnPlayerId);
+        const nextIndex = (currentIndex + 1) % players.length;
+        nextTurnPlayerId = players[nextIndex]?.id ?? gameState.turnPlayerId;
+      }
+
+      setGameState((prev) => ({
+        ...prev,
+        phase: "selecting",
+        selectedClueId: null,
+        turnPlayerId: nextTurnPlayerId,
+      }));
     }
 
     setIsSubmitting(false);
@@ -396,6 +489,23 @@ export default function GamePage({ params }: GamePageProps) {
 
     if (result.error) {
       setActionError(result.error);
+    } else {
+      // Optimistically update local state
+      setGameState((prev) => ({
+        ...prev,
+        phase: "revealing",
+        revealedIds: prev.selectedClueId 
+          ? [...prev.revealedIds, prev.selectedClueId]
+          : prev.revealedIds,
+        lastResult: {
+          clueId: prev.selectedClueId ?? "",
+          playerId: currentPlayerId!,
+          playerName: "No one",
+          isCorrect: false,
+          pointsDelta: 0,
+          answer: "(skipped)",
+        },
+      }));
     }
 
     setIsSubmitting(false);
