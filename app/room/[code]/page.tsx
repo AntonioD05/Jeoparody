@@ -50,7 +50,7 @@ export default function RoomPage({ params }: RoomPageProps) {
       // Get room by code
       const { data: room } = await supabase
         .from("rooms")
-        .select("id, host_id")
+        .select("id, host_id, status")
         .eq("code", code)
         .single();
 
@@ -62,6 +62,11 @@ export default function RoomPage({ params }: RoomPageProps) {
 
       setRoomId(room.id);
       setHostId(room.host_id);
+
+      if (room.status === "playing") {
+        router.push(`/game/${code}`);
+        return;
+      }
 
       // Fetch players for this room
       const { data: playersData } = await supabase
@@ -180,15 +185,17 @@ export default function RoomPage({ params }: RoomPageProps) {
             // Check if they're the host
             const { data: room } = await supabase
               .from("rooms")
-              .select("host_id")
+              .select("host_id, status")
               .eq("id", roomId)
               .single();
 
             if (!room) return;
 
             if (room.host_id === dbPlayer.id) {
-              // Host left - delete the room
-              await supabase.from("rooms").delete().eq("id", roomId);
+              // Host left. If game is playing, keep room alive.
+              if (room.status !== "playing") {
+                await supabase.from("rooms").delete().eq("id", roomId);
+              }
               return;
             } else {
               // Non-host left - delete that player
@@ -227,14 +234,16 @@ export default function RoomPage({ params }: RoomPageProps) {
               // Check if the leaving player was the host
               const { data: room } = await supabase
                 .from("rooms")
-                .select("host_id")
+                .select("host_id, status")
                 .eq("id", roomId)
                 .single();
 
               if (!room) return;
 
               if (room.host_id === leftPlayerId) {
-                await supabase.from("rooms").delete().eq("id", roomId);
+                if (room.status !== "playing") {
+                  await supabase.from("rooms").delete().eq("id", roomId);
+                }
               } else {
                 await supabase.from("players").delete().eq("id", leftPlayerId);
               }
@@ -300,6 +309,36 @@ export default function RoomPage({ params }: RoomPageProps) {
       supabase.removeChannel(channel);
     };
   }, [roomId, router]);
+
+  // Subscribe to room status changes - redirect to game when playing
+  useEffect(() => {
+    if (!roomId) return;
+
+    const supabase = createClient();
+
+    const channel = supabase
+      .channel(`room-${roomId}-status`)
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "rooms",
+          filter: `id=eq.${roomId}`,
+        },
+        (payload) => {
+          const status = (payload.new as { status?: string } | null)?.status;
+          if (status === "playing") {
+            router.push(`/game/${code}`);
+          }
+        },
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [roomId, router, code]);
 
   const handleCopy = async () => {
     try {
