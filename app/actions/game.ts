@@ -503,3 +503,75 @@ export async function getGameState(
     error: null,
   };
 }
+
+/**
+ * Leave the game during play - removes player and handles turn rotation
+ */
+export async function leaveGame(
+  roomCode: string
+): Promise<{ error: string | null }> {
+  const supabase = await createClient();
+  const cookieStore = await cookies();
+  const currentPlayerId = await getCurrentPlayerId(roomCode);
+
+  if (!currentPlayerId) {
+    return { error: "You are not in this game" };
+  }
+
+  // Get room
+  const { data: room } = await supabase
+    .from("rooms")
+    .select("id, host_id")
+    .eq("code", roomCode)
+    .single();
+
+  if (!room) {
+    // Clear cookie and return
+    cookieStore.delete(`player_${roomCode}`);
+    return { error: null };
+  }
+
+  // Get all players in order
+  const { data: players } = await supabase
+    .from("players")
+    .select("id")
+    .eq("room_id", room.id)
+    .order("joined_at", { ascending: true });
+
+  // Get game state to check if leaving player is turn player
+  const { data: game } = await supabase
+    .from("games")
+    .select("turn_player_id, phase")
+    .eq("room_id", room.id)
+    .single();
+
+  // If leaving player is the turn player, rotate to next player
+  if (game && players && players.length > 1 && game.turn_player_id === currentPlayerId) {
+    const currentIndex = players.findIndex((p) => p.id === currentPlayerId);
+    const remainingPlayers = players.filter((p) => p.id !== currentPlayerId);
+    const nextIndex = currentIndex % remainingPlayers.length;
+    const nextTurnPlayerId = remainingPlayers[nextIndex]?.id;
+
+    if (nextTurnPlayerId) {
+      // If we were in answering phase, go back to selecting
+      const newPhase = game.phase === "answering" ? "selecting" : game.phase;
+      
+      await supabase
+        .from("games")
+        .update({ 
+          turn_player_id: nextTurnPlayerId,
+          phase: newPhase,
+          selected_clue_id: newPhase === "selecting" ? null : undefined,
+        })
+        .eq("room_id", room.id);
+    }
+  }
+
+  // Delete the player
+  await supabase.from("players").delete().eq("id", currentPlayerId);
+
+  // Clear the player cookie
+  cookieStore.delete(`player_${roomCode}`);
+
+  return { error: null };
+}

@@ -7,7 +7,7 @@ import JeopardyBoard from "../../../components/JeopardyBoard";
 import Scoreboard from "../../../components/Scoreboard";
 import StatusBadge from "../../../components/StatusBadge";
 import { createClient } from "../../../utils/supabase/client";
-import { selectClue, submitAnswer, continueGame, skipClue, cleanupFinishedGame } from "../../actions/game";
+import { selectClue, submitAnswer, continueGame, skipClue, cleanupFinishedGame, leaveGame } from "../../actions/game";
 import { useVoiceover } from "../../../hooks/useVoiceover";
 import type { Board as RawBoard } from "../../../types/board-schema";
 import type { Board, Clue, Player } from "../../../types/game";
@@ -617,6 +617,19 @@ export default function GamePage({ params }: GamePageProps) {
                   </svg>
                 )}
                 {isMuted ? "Muted" : "Sound"}
+              </button>
+              <button
+                onClick={async () => {
+                  await leaveGame(code);
+                  router.push("/");
+                }}
+                className="flex items-center gap-1.5 rounded-full border border-slate-700 bg-slate-800/50 px-3 py-1 text-xs font-semibold uppercase tracking-[0.15em] text-slate-300 transition hover:border-rose-400 hover:text-rose-200"
+                title="Leave game"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-3.5 w-3.5">
+                  <path fillRule="evenodd" d="M7.5 3.75A1.5 1.5 0 006 5.25v13.5a1.5 1.5 0 001.5 1.5h6a1.5 1.5 0 001.5-1.5V15a.75.75 0 011.5 0v3.75a3 3 0 01-3 3h-6a3 3 0 01-3-3V5.25a3 3 0 013-3h6a3 3 0 013 3V9A.75.75 0 0115 9V5.25a1.5 1.5 0 00-1.5-1.5h-6zm10.72 4.72a.75.75 0 011.06 0l3 3a.75.75 0 010 1.06l-3 3a.75.75 0 11-1.06-1.06l1.72-1.72H9a.75.75 0 010-1.5h10.94l-1.72-1.72a.75.75 0 010-1.06z" clipRule="evenodd" />
+                </svg>
+                Exit
               </button>
             </div>
           </div>
