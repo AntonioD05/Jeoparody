@@ -107,6 +107,16 @@ export async function joinRoom(
     return { error: "This game has already ended." };
   }
 
+  // Check if room is full (max 4 players)
+  const { count: playerCount } = await supabase
+    .from("players")
+    .select("*", { count: "exact", head: true })
+    .eq("room_id", room.id);
+
+  if (playerCount !== null && playerCount >= 4) {
+    return { error: "Room is full. Maximum 4 players allowed." };
+  }
+
   // Check if player name is already taken in this room
   const { data: existingPlayer } = await supabase
     .from("players")
