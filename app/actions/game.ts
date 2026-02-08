@@ -211,13 +211,6 @@ export async function submitAnswer(
   // Add clue to revealed list
   const revealedIds = [...((game.revealed_ids as string[]) ?? []), game.selected_clue_id];
 
-  // Check if game is finished (all clues revealed)
-  const totalClues = board.categories.reduce(
-    (sum, cat) => sum + cat.clues.length,
-    0
-  );
-  const isFinished = revealedIds.length >= totalClues;
-
   // Create last result record
   const lastResult: LastResult = {
     clueId: game.selected_clue_id,
@@ -228,14 +221,13 @@ export async function submitAnswer(
     answer,
   };
 
-  // Update game state - if all clues revealed, go to Final Jeopardy
+  // Update game state - always go to revealing first, continue button will trigger Final Jeopardy
   const { error: updateError } = await supabase
     .from("games")
     .update({
-      phase: isFinished ? "final_wager" : "revealing",
+      phase: "revealing",
       revealed_ids: revealedIds,
       last_result: lastResult,
-      ...(isFinished ? { final_wagers: [] } : {}),
     })
     .eq("room_id", room.id);
 
@@ -274,7 +266,7 @@ export async function continueGame(
   // Get game state
   const { data: game } = await supabase
     .from("games")
-    .select("phase, turn_player_id, last_result")
+    .select("phase, turn_player_id, last_result, revealed_ids, board_json")
     .eq("room_id", room.id)
     .single();
 
@@ -292,6 +284,35 @@ export async function continueGame(
 
   if (!isTurnPlayer) {
     return { error: "Only the current player can continue" };
+  }
+
+  // Check if all clues are revealed (board is finished)
+  const board = game.board_json as {
+    categories: Array<{ clues: Array<{ id: string }> }>;
+  };
+  const totalClues = board.categories.reduce(
+    (sum, cat) => sum + cat.clues.length,
+    0
+  );
+  const revealedIds = (game.revealed_ids as string[]) ?? [];
+  const isFinished = revealedIds.length >= totalClues;
+
+  // If board is finished, go to Final Jeopardy
+  if (isFinished) {
+    const { error: updateError } = await supabase
+      .from("games")
+      .update({
+        phase: "final_wager",
+        selected_clue_id: null,
+        final_wagers: [],
+      })
+      .eq("room_id", room.id);
+
+    if (updateError) {
+      return { error: "Failed to start Final Jeopardy" };
+    }
+
+    return { error: null };
   }
 
   // Get all players in order
@@ -363,7 +384,7 @@ export async function skipClue(
   // Get game state
   const { data: game } = await supabase
     .from("games")
-    .select("phase, selected_clue_id, revealed_ids, turn_player_id, board_json")
+    .select("phase, selected_clue_id, revealed_ids, turn_player_id")
     .eq("room_id", room.id)
     .single();
 
@@ -387,16 +408,6 @@ export async function skipClue(
   // Add to revealed without scoring
   const revealedIds = [...((game.revealed_ids as string[]) ?? []), game.selected_clue_id];
 
-  // Check if game is finished
-  const board = game.board_json as {
-    categories: Array<{ clues: Array<{ id: string }> }>;
-  };
-  const totalClues = board.categories.reduce(
-    (sum, cat) => sum + cat.clues.length,
-    0
-  );
-  const isFinished = revealedIds.length >= totalClues;
-
   // Create skip result
   const lastResult: LastResult = {
     clueId: game.selected_clue_id,
@@ -407,14 +418,13 @@ export async function skipClue(
     answer: "(skipped)",
   };
 
-  // Update game state - if all clues revealed, go to Final Jeopardy
+  // Update game state - always go to revealing first, continue button will trigger Final Jeopardy
   const { error: updateError } = await supabase
     .from("games")
     .update({
-      phase: isFinished ? "final_wager" : "revealing",
+      phase: "revealing",
       revealed_ids: revealedIds,
       last_result: lastResult,
-      ...(isFinished ? { final_wagers: [] } : {}),
     })
     .eq("room_id", room.id);
 
