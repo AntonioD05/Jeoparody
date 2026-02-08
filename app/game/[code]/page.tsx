@@ -186,28 +186,33 @@ export default function GamePage({ params }: GamePageProps) {
     const refetchGameState = async () => {
       const { data: game } = await supabase
         .from("games")
-        .select("phase, turn_player_id, revealed_ids, selected_clue_id, last_result")
+        .select("board_json, phase, turn_player_id, revealed_ids, selected_clue_id, last_result")
         .eq("room_id", roomId)
         .single();
 
       if (game) {
+        const newPhase = (game.phase as GamePhase) ?? "selecting";
+        const newSelectedClueId = game.selected_clue_id;
+        
         setGameState({
-          phase: (game.phase as GamePhase) ?? "selecting",
+          phase: newPhase,
           turnPlayerId: game.turn_player_id,
           revealedIds: (game.revealed_ids as string[]) ?? [],
-          selectedClueId: game.selected_clue_id,
+          selectedClueId: newSelectedClueId,
           lastResult: game.last_result as LastResult | null,
         });
 
-        // Update modal state based on phase
-        if (game.phase === "answering" && game.selected_clue_id && board) {
-          const foundClue = board.categories
+        // Update modal state based on phase - use board from game if local board not ready
+        const currentBoard = board ?? (game.board_json ? normalizeBoard(game.board_json as RawBoard) : null);
+        
+        if (newPhase === "answering" && newSelectedClueId && currentBoard) {
+          const foundClue = currentBoard.categories
             .flatMap((cat) => cat.clues)
-            .find((c) => c.id === game.selected_clue_id);
+            .find((c) => c.id === newSelectedClueId);
           if (foundClue) {
             setSelectedClue(foundClue);
           }
-        } else if (game.phase !== "answering") {
+        } else if (newPhase !== "answering") {
           setSelectedClue(null);
         }
       }
@@ -223,39 +228,9 @@ export default function GamePage({ params }: GamePageProps) {
           table: "games",
           filter: `room_id=eq.${roomId}`,
         },
-        (payload) => {
-          const newGame = payload.new as {
-            phase?: string;
-            turn_player_id?: string | null;
-            revealed_ids?: string[];
-            selected_clue_id?: string | null;
-            last_result?: LastResult | null;
-          };
-
-          // Handle nulls properly - turn_player_id and selected_clue_id can be legitimately null
-          setGameState({
-            phase: (newGame.phase as GamePhase) ?? "selecting",
-            turnPlayerId: newGame.turn_player_id ?? null,
-            revealedIds: newGame.revealed_ids ?? [],
-            selectedClueId: newGame.selected_clue_id ?? null,
-            lastResult: (newGame.last_result as LastResult) ?? null,
-          });
-
-          // If we're in answering phase, show the clue modal for all players
-          if (newGame.phase === "answering" && newGame.selected_clue_id && board) {
-            const clueId = newGame.selected_clue_id;
-            const foundClue = board.categories
-              .flatMap((cat) => cat.clues)
-              .find((c) => c.id === clueId);
-            if (foundClue) {
-              setSelectedClue(foundClue);
-            }
-          }
-
-          // Clear selected clue when phase changes away from answering
-          if (newGame.phase !== "answering") {
-            setSelectedClue(null);
-          }
+        () => {
+          // Always refetch on any game update to ensure we have the latest state
+          refetchGameState();
         }
       )
       .subscribe((status) => {
@@ -265,10 +240,14 @@ export default function GamePage({ params }: GamePageProps) {
         }
       });
 
+    // Also poll periodically as a fallback for reliability
+    const pollInterval = setInterval(refetchGameState, 2000);
+
     return () => {
+      clearInterval(pollInterval);
       supabase.removeChannel(channel);
     };
-  }, [roomId, board]);
+  }, [roomId, board, normalizeBoard]);
 
   // Subscribe to player changes
   useEffect(() => {
@@ -317,7 +296,11 @@ export default function GamePage({ params }: GamePageProps) {
         }
       });
 
+    // Poll players periodically as fallback
+    const pollInterval = setInterval(refetchPlayers, 2000);
+
     return () => {
+      clearInterval(pollInterval);
       supabase.removeChannel(channel);
     };
   }, [roomId, hostId]);
