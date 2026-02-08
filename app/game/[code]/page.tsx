@@ -532,6 +532,7 @@ export default function GamePage({ params }: GamePageProps) {
   };
 
   const handleContinue = async () => {
+    stopResult(); // Stop any playing voiceover
     setActionError(null);
     setIsSubmitting(true);
 
@@ -566,6 +567,7 @@ export default function GamePage({ params }: GamePageProps) {
   };
 
   const handleSkip = async () => {
+    stopResult(); // Stop any playing voiceover
     setActionError(null);
     setIsSubmitting(true);
 
@@ -705,6 +707,7 @@ export default function GamePage({ params }: GamePageProps) {
               </button>
               <button
                 onClick={async () => {
+                  stopResult(); // Stop any playing voiceover
                   await leaveGame(code);
                   router.push("/");
                 }}
