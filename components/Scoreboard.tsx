@@ -33,7 +33,10 @@ export default function Scoreboard({ players, currentPlayerId, turnPlayerId }: S
               <div className="flex items-center gap-2">
                 <span className="text-xs text-slate-500 w-4">{index + 1}.</span>
                 <span className="font-medium">{player.name}</span>
-                {player.isHost && (
+                {isCurrent && (
+                  <span className="text-[10px] uppercase tracking-wider text-amber-300">(you)</span>
+                )}
+                {player.isHost && !isCurrent && (
                   <span className="text-[10px] uppercase tracking-wider text-slate-500">(host)</span>
                 )}
                 {isTurn && (

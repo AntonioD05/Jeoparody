@@ -585,7 +585,7 @@ export default function RoomPage({ params }: RoomPageProps) {
         </header>
 
         <section className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
-          <PlayerList players={players} />
+          <PlayerList players={players} currentPlayerId={currentPlayerId} />
           <div className="flex flex-col gap-4">
             {currentPlayerId && hostId && currentPlayerId === hostId ? (
               <HostControls
