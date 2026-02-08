@@ -6,6 +6,7 @@ import HostControls from "../../../components/HostControls";
 import PlayerList from "../../../components/PlayerList";
 import StatusBadge from "../../../components/StatusBadge";
 import { createClient } from "../../../utils/supabase/client";
+import { extractPdfText } from "../../../utils/pdf-extractor";
 import { leaveRoom } from "../../actions/rooms";
 import type { Player } from "../../../types/game";
 import type { RealtimeChannel } from "@supabase/supabase-js";
@@ -441,27 +442,15 @@ export default function RoomPage({ params }: RoomPageProps) {
     setBoard(null);
 
     try {
-      const formData = new FormData();
-      formData.append("file", selectedFile);
-
-      const extractResponse = await fetch("/api/extract", {
-        method: "POST",
-        body: formData,
-      });
-
-      if (!extractResponse.ok) {
-        const extractError = await extractResponse.json();
-        throw new Error(extractError?.error || "PDF extraction failed.");
-      }
-
-      const extractJson = await extractResponse.json();
+      // Extract PDF text client-side (avoids Vercel's 4.5MB request limit)
+      const extractResult = await extractPdfText(selectedFile);
 
       const generateResponse = await fetch("/api/generate-board", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           roomId: manualRoomId.trim(),
-          chunks: extractJson.chunks ?? [],
+          chunks: extractResult.chunks,
         }),
       });
 
