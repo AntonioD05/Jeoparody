@@ -57,8 +57,18 @@ const GeminiBoardSchema = {
         required: ["title", "clues"],
       },
     },
+    final_jeopardy: {
+      type: "OBJECT",
+      properties: {
+        category: { type: "STRING" },
+        question: { type: "STRING" },
+        answer: { type: "STRING" },
+        source_snippet: { type: "STRING" },
+      },
+      required: ["category", "question", "answer", "source_snippet"],
+    },
   },
-  required: ["categories"],
+  required: ["categories", "final_jeopardy"],
 };
 
 const buildPrompt = (chunks: string[], difficulty?: string) => {
@@ -69,6 +79,8 @@ const buildPrompt = (chunks: string[], difficulty?: string) => {
     "- Exactly 5 categories, each with exactly 5 clues.",
     "- Clue values must be 200, 400, 600, 800, 1000.",
     "- Each clue has: id (string), value (int), question (string), answer (string), source_snippet (1-2 sentences).",
+    "- Include a final_jeopardy object with: category (string), question (string), answer (string), source_snippet (1-2 sentences).",
+    "- The Final Jeopardy question should be challenging and different from the other categories, worth all-or-nothing wagering.",
     "Use the provided source text chunks to derive questions.",
     difficulty ? `Difficulty: ${difficulty}.` : "",
     "",

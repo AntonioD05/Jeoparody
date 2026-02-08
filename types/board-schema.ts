@@ -21,8 +21,17 @@ export const CategorySchema = z.object({
   clues: z.array(ClueSchema).length(5),
 });
 
+export const FinalJeopardySchema = z.object({
+  category: z.string().min(1),
+  question: z.string().min(1),
+  answer: z.string().min(1),
+  source_snippet: z.string().min(1),
+});
+
 export const BoardSchema = z.object({
   categories: z.array(CategorySchema).length(5),
+  final_jeopardy: FinalJeopardySchema,
 });
 
 export type Board = z.infer<typeof BoardSchema>;
+export type FinalJeopardy = z.infer<typeof FinalJeopardySchema>;

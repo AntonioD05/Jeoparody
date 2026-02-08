@@ -3,14 +3,26 @@
 import { use, useEffect, useState, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import ClueModal from "../../../components/ClueModal";
+import FinalJeopardyModal from "../../../components/FinalJeopardyModal";
 import JeopardyBoard from "../../../components/JeopardyBoard";
 import Scoreboard from "../../../components/Scoreboard";
 import StatusBadge from "../../../components/StatusBadge";
 import { createClient } from "../../../utils/supabase/client";
-import { selectClue, submitAnswer, continueGame, skipClue, cleanupFinishedGame, leaveGame } from "../../actions/game";
+import { 
+  selectClue, 
+  submitAnswer, 
+  continueGame, 
+  skipClue, 
+  cleanupFinishedGame,
+  leaveGame,
+  submitFinalWager,
+  submitFinalAnswer,
+  revealFinalResults,
+} from "../../actions/game";
+import type { FinalJeopardyWager } from "../../actions/game";
 import { useVoiceover } from "../../../hooks/useVoiceover";
-import type { Board as RawBoard } from "../../../types/board-schema";
-import type { Board, Clue, Player } from "../../../types/game";
+import type { Board as RawBoard, FinalJeopardy as RawFinalJeopardy } from "../../../types/board-schema";
+import type { Board, Clue, Player, FinalJeopardy } from "../../../types/game";
 
 interface GamePageProps {
   params: Promise<{
@@ -18,7 +30,7 @@ interface GamePageProps {
   }>;
 }
 
-type GamePhase = "selecting" | "answering" | "revealing" | "finished";
+type GamePhase = "selecting" | "answering" | "revealing" | "final_wager" | "final_answering" | "final_revealing" | "finished";
 
 type LastResult = {
   clueId: string;
@@ -35,6 +47,7 @@ type GameState = {
   revealedIds: string[];
   selectedClueId: string | null;
   lastResult: LastResult | null;
+  finalWagers: FinalJeopardyWager[];
 };
 
 export default function GamePage({ params }: GamePageProps) {
@@ -43,6 +56,7 @@ export default function GamePage({ params }: GamePageProps) {
   
   const [players, setPlayers] = useState<Player[]>([]);
   const [board, setBoard] = useState<Board | null>(null);
+  const [finalJeopardy, setFinalJeopardy] = useState<FinalJeopardy | null>(null);
   const [isLoadingBoard, setIsLoadingBoard] = useState(true);
   const [boardError, setBoardError] = useState<string | null>(null);
   const [currentPlayerId, setCurrentPlayerId] = useState<string | null>(null);
@@ -56,7 +70,9 @@ export default function GamePage({ params }: GamePageProps) {
     revealedIds: [],
     selectedClueId: null,
     lastResult: null,
+    finalWagers: [],
   });
+
 
   // For the ClueModal
   const [selectedClue, setSelectedClue] = useState<Clue | null>(null);
@@ -87,6 +103,15 @@ export default function GamePage({ params }: GamePageProps) {
           })),
         };
       }),
+    };
+  }, []);
+
+  const normalizeFinalJeopardy = useCallback((raw: RawFinalJeopardy): FinalJeopardy => {
+    return {
+      category: raw.category,
+      question: raw.question,
+      answer: raw.answer,
+      sourceSnippet: raw.source_snippet,
     };
   }, []);
 
@@ -134,7 +159,7 @@ export default function GamePage({ params }: GamePageProps) {
       // Get game
       const { data: game, error: gameError } = await supabase
         .from("games")
-        .select("board_json, phase, turn_player_id, revealed_ids, selected_clue_id, last_result")
+        .select("board_json, phase, turn_player_id, revealed_ids, selected_clue_id, last_result, final_wagers")
         .eq("room_id", room.id)
         .single();
 
@@ -147,13 +172,18 @@ export default function GamePage({ params }: GamePageProps) {
       }
 
       if (isMounted) {
-        setBoard(normalizeBoard(game.board_json as RawBoard));
+        const rawBoard = game.board_json as RawBoard & { final_jeopardy?: RawFinalJeopardy };
+        setBoard(normalizeBoard(rawBoard));
+        if (rawBoard.final_jeopardy) {
+          setFinalJeopardy(normalizeFinalJeopardy(rawBoard.final_jeopardy));
+        }
         setGameState({
           phase: (game.phase as GamePhase) ?? "selecting",
           turnPlayerId: game.turn_player_id,
           revealedIds: (game.revealed_ids as string[]) ?? [],
           selectedClueId: game.selected_clue_id,
           lastResult: game.last_result as LastResult | null,
+          finalWagers: (game.final_wagers as FinalJeopardyWager[]) ?? [],
         });
         setIsLoadingBoard(false);
       }
@@ -182,7 +212,7 @@ export default function GamePage({ params }: GamePageProps) {
     return () => {
       isMounted = false;
     };
-  }, [code, normalizeBoard, router]);
+  }, [code, normalizeBoard, normalizeFinalJeopardy, router]);
 
   // Subscribe to game state changes
   useEffect(() => {
@@ -194,7 +224,7 @@ export default function GamePage({ params }: GamePageProps) {
     const refetchGameState = async () => {
       const { data: game } = await supabase
         .from("games")
-        .select("board_json, phase, turn_player_id, revealed_ids, selected_clue_id, last_result")
+        .select("board_json, phase, turn_player_id, revealed_ids, selected_clue_id, last_result, final_wagers")
         .eq("room_id", roomId)
         .single();
 
@@ -208,7 +238,16 @@ export default function GamePage({ params }: GamePageProps) {
           revealedIds: (game.revealed_ids as string[]) ?? [],
           selectedClueId: newSelectedClueId,
           lastResult: game.last_result as LastResult | null,
+          finalWagers: (game.final_wagers as FinalJeopardyWager[]) ?? [],
         });
+
+        // Update Final Jeopardy if not already set
+        if (game.board_json) {
+          const rawBoard = game.board_json as RawBoard & { final_jeopardy?: RawFinalJeopardy };
+          if (rawBoard.final_jeopardy && !finalJeopardy) {
+            setFinalJeopardy(normalizeFinalJeopardy(rawBoard.final_jeopardy));
+          }
+        }
 
         // Update modal state based on phase - use board from game if local board not ready
         const currentBoard = board ?? (game.board_json ? normalizeBoard(game.board_json as RawBoard) : null);
@@ -255,7 +294,7 @@ export default function GamePage({ params }: GamePageProps) {
       clearInterval(pollInterval);
       supabase.removeChannel(channel);
     };
-  }, [roomId, board, normalizeBoard]);
+  }, [roomId, board, normalizeBoard, normalizeFinalJeopardy, finalJeopardy]);
 
   // Subscribe to player changes
   useEffect(() => {
@@ -557,6 +596,46 @@ export default function GamePage({ params }: GamePageProps) {
     setSelectedClue(null);
   };
 
+  // Final Jeopardy handlers
+  const handleFinalWager = async (wager: number) => {
+    setActionError(null);
+    setIsSubmitting(true);
+
+    const result = await submitFinalWager(code, wager);
+
+    if (result.error) {
+      setActionError(result.error);
+    }
+
+    setIsSubmitting(false);
+  };
+
+  const handleFinalAnswer = async (answer: string) => {
+    setActionError(null);
+    setIsSubmitting(true);
+
+    const result = await submitFinalAnswer(code, answer);
+
+    if (result.error) {
+      setActionError(result.error);
+    }
+
+    setIsSubmitting(false);
+  };
+
+  const handleRevealFinalResults = async () => {
+    setActionError(null);
+    setIsSubmitting(true);
+
+    const result = await revealFinalResults(code);
+
+    if (result.error) {
+      setActionError(result.error);
+    }
+
+    setIsSubmitting(false);
+  };
+
   // Find the turn player's name
   const turnPlayer = players.find((p) => p.id === gameState.turnPlayerId);
   const isMyTurn = currentPlayerId === gameState.turnPlayerId;
@@ -590,7 +669,13 @@ export default function GamePage({ params }: GamePageProps) {
                 Room {code}
               </h1>
               <StatusBadge 
-                label={gameState.phase === "finished" ? "Game Over" : "Playing"} 
+                label={
+                  gameState.phase === "finished" 
+                    ? "Game Over" 
+                    : gameState.phase.startsWith("final_") 
+                      ? "Final Jeopardy" 
+                      : "Playing"
+                } 
               />
               <button
                 onClick={() => {
@@ -648,6 +733,19 @@ export default function GamePage({ params }: GamePageProps) {
                 </span>
               )}
               {gameState.phase === "revealing" && "Answer revealed"}
+              {gameState.phase === "final_wager" && (
+                <span className="flex items-center gap-2">
+                  <span className="h-2 w-2 animate-pulse rounded-full bg-amber-400"></span>
+                  Final Jeopardy - Place your wagers!
+                </span>
+              )}
+              {gameState.phase === "final_answering" && (
+                <span className="flex items-center gap-2">
+                  <span className="h-2 w-2 animate-pulse rounded-full bg-amber-400"></span>
+                  Final Jeopardy - Submit your answers!
+                </span>
+              )}
+              {gameState.phase === "final_revealing" && "Final Jeopardy - Results"}
               {gameState.phase === "finished" && "Game complete!"}
             </span>
             <span className="text-xs text-slate-500">
@@ -810,6 +908,30 @@ export default function GamePage({ params }: GamePageProps) {
         canAnswer={isMyTurn}
         isMuted={isMuted}
       />
+
+      {/* Final Jeopardy Modal */}
+      {(gameState.phase === "final_wager" || 
+        gameState.phase === "final_answering" || 
+        gameState.phase === "final_revealing") && (
+        <FinalJeopardyModal
+          finalJeopardy={finalJeopardy}
+          phase={
+            gameState.phase === "final_wager" 
+              ? "wager" 
+              : gameState.phase === "final_answering" 
+                ? "answering" 
+                : "revealing"
+          }
+          currentPlayerId={currentPlayerId}
+          players={players}
+          wagers={gameState.finalWagers}
+          onSubmitWager={handleFinalWager}
+          onSubmitAnswer={handleFinalAnswer}
+          onRevealResults={handleRevealFinalResults}
+          isSubmitting={isSubmitting}
+          isMuted={isMuted}
+        />
+      )}
     </div>
   );
 }

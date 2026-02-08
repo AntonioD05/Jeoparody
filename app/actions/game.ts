@@ -2,8 +2,16 @@
 
 import { createClient } from "../../utils/supabase/server";
 import { cookies } from "next/headers";
+import { generateJsonWithGemini } from "../../utils/gemini";
 
-export type GamePhase = "selecting" | "answering" | "revealing" | "finished";
+export type GamePhase = 
+  | "selecting" 
+  | "answering" 
+  | "revealing" 
+  | "final_wager"
+  | "final_answering"
+  | "final_revealing"
+  | "finished";
 
 export type LastResult = {
   clueId: string;
@@ -14,6 +22,14 @@ export type LastResult = {
   answer: string;
 };
 
+export type FinalJeopardyWager = {
+  playerId: string;
+  wager: number;
+  answer?: string;
+  isCorrect?: boolean;
+  validated?: boolean;
+};
+
 export type GameState = {
   roomId: string;
   boardJson: unknown;
@@ -22,6 +38,7 @@ export type GameState = {
   revealedIds: string[];
   selectedClueId: string | null;
   lastResult: LastResult | null;
+  finalWagers?: FinalJeopardyWager[];
 };
 
 /**
@@ -211,26 +228,19 @@ export async function submitAnswer(
     answer,
   };
 
-  // Update game state
+  // Update game state - if all clues revealed, go to Final Jeopardy
   const { error: updateError } = await supabase
     .from("games")
     .update({
-      phase: isFinished ? "finished" : "revealing",
+      phase: isFinished ? "final_wager" : "revealing",
       revealed_ids: revealedIds,
       last_result: lastResult,
+      ...(isFinished ? { final_wagers: [] } : {}),
     })
     .eq("room_id", room.id);
 
   if (updateError) {
     return { error: "Failed to update game state" };
-  }
-
-  // If game is finished, also update room status
-  if (isFinished) {
-    await supabase
-      .from("rooms")
-      .update({ status: "finished" })
-      .eq("id", room.id);
   }
 
   return { error: null };
@@ -397,26 +407,19 @@ export async function skipClue(
     answer: "(skipped)",
   };
 
-  // Update game state
+  // Update game state - if all clues revealed, go to Final Jeopardy
   const { error: updateError } = await supabase
     .from("games")
     .update({
-      phase: isFinished ? "finished" : "revealing",
+      phase: isFinished ? "final_wager" : "revealing",
       revealed_ids: revealedIds,
       last_result: lastResult,
+      ...(isFinished ? { final_wagers: [] } : {}),
     })
     .eq("room_id", room.id);
 
   if (updateError) {
     return { error: "Failed to skip clue" };
-  }
-
-  // If game is finished, also update room status
-  if (isFinished) {
-    await supabase
-      .from("rooms")
-      .update({ status: "finished" })
-      .eq("id", room.id);
   }
 
   return { error: null };
@@ -499,6 +502,7 @@ export async function getGameState(
       revealedIds: (game.revealed_ids as string[]) ?? [],
       selectedClueId: game.selected_clue_id,
       lastResult: game.last_result as LastResult | null,
+      finalWagers: (game.final_wagers as FinalJeopardyWager[]) ?? [],
     },
     error: null,
   };
@@ -572,6 +576,319 @@ export async function leaveGame(
 
   // Clear the player cookie
   cookieStore.delete(`player_${roomCode}`);
+
+  return { error: null };
+}
+
+/**
+ * Submit a wager for Final Jeopardy
+ */
+export async function submitFinalWager(
+  roomCode: string,
+  wager: number
+): Promise<{ error: string | null }> {
+  const supabase = await createClient();
+  const currentPlayerId = await getCurrentPlayerId(roomCode);
+
+  if (!currentPlayerId) {
+    return { error: "You are not in this game" };
+  }
+
+  // Get room
+  const { data: room } = await supabase
+    .from("rooms")
+    .select("id")
+    .eq("code", roomCode)
+    .single();
+
+  if (!room) {
+    return { error: "Room not found" };
+  }
+
+  // Get player's current score
+  const { data: player } = await supabase
+    .from("players")
+    .select("id, score")
+    .eq("id", currentPlayerId)
+    .single();
+
+  if (!player) {
+    return { error: "Player not found" };
+  }
+
+  const currentScore = player.score ?? 0;
+
+  // Validate wager: must be between 0 and current score (or 1000 if score <= 0)
+  const maxWager = currentScore > 0 ? currentScore : 1000;
+  if (wager < 0 || wager > maxWager) {
+    return { error: `Wager must be between 0 and ${maxWager}` };
+  }
+
+  // Get game
+  const { data: game } = await supabase
+    .from("games")
+    .select("phase, final_wagers")
+    .eq("room_id", room.id)
+    .single();
+
+  if (!game) {
+    return { error: "Game not found" };
+  }
+
+  if (game.phase !== "final_wager") {
+    return { error: "Not in wagering phase" };
+  }
+
+  const currentWagers = (game.final_wagers as FinalJeopardyWager[]) ?? [];
+  
+  // Check if player already submitted a wager
+  if (currentWagers.some((w) => w.playerId === currentPlayerId)) {
+    return { error: "You have already submitted a wager" };
+  }
+
+  // Add player's wager
+  const newWagers = [
+    ...currentWagers,
+    { playerId: currentPlayerId, wager },
+  ];
+
+  // Check if all players have wagered
+  const { data: allPlayers } = await supabase
+    .from("players")
+    .select("id")
+    .eq("room_id", room.id);
+
+  const allWagered = allPlayers?.every((p) =>
+    newWagers.some((w) => w.playerId === p.id)
+  );
+
+  // Update game state
+  const { error: updateError } = await supabase
+    .from("games")
+    .update({
+      final_wagers: newWagers,
+      ...(allWagered ? { phase: "final_answering" } : {}),
+    })
+    .eq("room_id", room.id);
+
+  if (updateError) {
+    return { error: "Failed to submit wager" };
+  }
+
+  return { error: null };
+}
+
+/**
+ * Submit an answer for Final Jeopardy
+ */
+export async function submitFinalAnswer(
+  roomCode: string,
+  answer: string
+): Promise<{ error: string | null }> {
+  const supabase = await createClient();
+  const currentPlayerId = await getCurrentPlayerId(roomCode);
+
+  if (!currentPlayerId) {
+    return { error: "You are not in this game" };
+  }
+
+  // Get room
+  const { data: room } = await supabase
+    .from("rooms")
+    .select("id")
+    .eq("code", roomCode)
+    .single();
+
+  if (!room) {
+    return { error: "Room not found" };
+  }
+
+  // Get game
+  const { data: game } = await supabase
+    .from("games")
+    .select("phase, final_wagers, board_json")
+    .eq("room_id", room.id)
+    .single();
+
+  if (!game) {
+    return { error: "Game not found" };
+  }
+
+  if (game.phase !== "final_answering") {
+    return { error: "Not in answering phase" };
+  }
+
+  const currentWagers = (game.final_wagers as FinalJeopardyWager[]) ?? [];
+  const playerWager = currentWagers.find((w) => w.playerId === currentPlayerId);
+
+  if (!playerWager) {
+    return { error: "No wager found for player" };
+  }
+
+  if (playerWager.answer !== undefined) {
+    return { error: "You have already submitted an answer" };
+  }
+
+  // Get Final Jeopardy question from board
+  const board = game.board_json as {
+    final_jeopardy?: {
+      question: string;
+      answer: string;
+    };
+  };
+
+  if (!board.final_jeopardy) {
+    return { error: "Final Jeopardy not found" };
+  }
+
+  // Validate answer using AI
+  let isCorrect = false;
+  try {
+    // First check for obvious matches
+    const normalizedCorrect = board.final_jeopardy.answer.toLowerCase().trim();
+    const normalizedPlayer = answer.toLowerCase().trim();
+    
+    if (
+      normalizedPlayer === normalizedCorrect ||
+      normalizedPlayer.includes(normalizedCorrect) ||
+      normalizedCorrect.includes(normalizedPlayer)
+    ) {
+      isCorrect = true;
+    } else {
+      // Use Gemini for more nuanced validation
+      const validationPrompt = [
+        "You are a Jeopardy answer validator. Determine if the player's answer is correct.",
+        "Be lenient with:",
+        "- Minor spelling errors",
+        "- Different phrasing that means the same thing",
+        "- Partial answers that capture the key concept",
+        "- Missing articles (a, an, the)",
+        "- Synonyms and equivalent terms",
+        "",
+        "Be strict about:",
+        "- Completely wrong answers",
+        "- Answers that mention a different concept entirely",
+        "- Numerical/factual errors",
+        "",
+        `Question: ${board.final_jeopardy.question}`,
+        `Correct Answer: ${board.final_jeopardy.answer}`,
+        `Player's Answer: ${answer}`,
+        "",
+        "Respond with JSON only: { \"isCorrect\": true/false, \"explanation\": \"brief reason\" }",
+      ].join("\n");
+
+      const raw = await generateJsonWithGemini(validationPrompt, { temperature: 0.1 });
+      const result = JSON.parse(raw);
+      isCorrect = Boolean(result.isCorrect);
+    }
+  } catch {
+    // Fallback to simple string matching
+    const normalizedCorrect = board.final_jeopardy.answer.toLowerCase().trim();
+    const normalizedPlayer = answer.toLowerCase().trim();
+    isCorrect =
+      normalizedPlayer.includes(normalizedCorrect) ||
+      normalizedCorrect.includes(normalizedPlayer);
+  }
+
+  // Update player's wager with answer
+  const updatedWagers = currentWagers.map((w) =>
+    w.playerId === currentPlayerId
+      ? { ...w, answer, isCorrect, validated: true }
+      : w
+  );
+
+  // Check if all players have answered
+  const { data: allPlayers } = await supabase
+    .from("players")
+    .select("id")
+    .eq("room_id", room.id);
+
+  const allAnswered = allPlayers?.every((p) =>
+    updatedWagers.some((w) => w.playerId === p.id && w.validated)
+  );
+
+  // Update game state
+  const { error: updateError } = await supabase
+    .from("games")
+    .update({
+      final_wagers: updatedWagers,
+      ...(allAnswered ? { phase: "final_revealing" } : {}),
+    })
+    .eq("room_id", room.id);
+
+  if (updateError) {
+    return { error: "Failed to submit answer" };
+  }
+
+  return { error: null };
+}
+
+/**
+ * Reveal Final Jeopardy results and update scores
+ */
+export async function revealFinalResults(
+  roomCode: string
+): Promise<{ error: string | null }> {
+  const supabase = await createClient();
+
+  // Get room
+  const { data: room } = await supabase
+    .from("rooms")
+    .select("id")
+    .eq("code", roomCode)
+    .single();
+
+  if (!room) {
+    return { error: "Room not found" };
+  }
+
+  // Get game
+  const { data: game } = await supabase
+    .from("games")
+    .select("phase, final_wagers")
+    .eq("room_id", room.id)
+    .single();
+
+  if (!game) {
+    return { error: "Game not found" };
+  }
+
+  if (game.phase !== "final_revealing") {
+    return { error: "Not in revealing phase" };
+  }
+
+  const wagers = (game.final_wagers as FinalJeopardyWager[]) ?? [];
+
+  // Update each player's score based on their wager result
+  for (const wager of wagers) {
+    const { data: player } = await supabase
+      .from("players")
+      .select("score")
+      .eq("id", wager.playerId)
+      .single();
+
+    if (player) {
+      const currentScore = player.score ?? 0;
+      const scoreDelta = wager.isCorrect ? wager.wager : -wager.wager;
+      const newScore = currentScore + scoreDelta;
+
+      await supabase
+        .from("players")
+        .update({ score: newScore })
+        .eq("id", wager.playerId);
+    }
+  }
+
+  // Update game and room to finished
+  await supabase
+    .from("games")
+    .update({ phase: "finished" })
+    .eq("room_id", room.id);
+
+  await supabase
+    .from("rooms")
+    .update({ status: "finished" })
+    .eq("id", room.id);
 
   return { error: null };
 }

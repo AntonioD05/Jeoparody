@@ -23,3 +23,18 @@ export type Category = {
 export type Board = {
   categories: Category[];
 };
+
+export type FinalJeopardy = {
+  category: string;
+  question: string;
+  answer: string;
+  sourceSnippet?: string;
+};
+
+export type FinalJeopardyWager = {
+  playerId: string;
+  wager: number;
+  answer?: string;
+  isCorrect?: boolean;
+  validated?: boolean;
+};
