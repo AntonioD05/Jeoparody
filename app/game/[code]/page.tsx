@@ -21,6 +21,8 @@ import {
 } from "../../actions/game";
 import type { FinalJeopardyWager } from "../../actions/game";
 import { useVoiceover } from "../../../hooks/useVoiceover";
+import { useFinalJeopardyMusic } from "../../../hooks/useFinalJeopardyMusic";
+import { useVictorySound } from "../../../hooks/useVictorySound";
 import type { Board as RawBoard, FinalJeopardy as RawFinalJeopardy } from "../../../types/board-schema";
 import type { Board, Clue, Player, FinalJeopardy } from "../../../types/game";
 
@@ -82,6 +84,12 @@ export default function GamePage({ params }: GamePageProps) {
   // Voiceover for result announcements
   const { speak: speakResult, stop: stopResult, isLoading: isResultLoading, isPlaying: isResultPlaying } = useVoiceover();
   const lastAnnouncedClueId = useRef<string | null>(null);
+  
+  // Final Jeopardy background music
+  const { play: playFinalMusic, stop: stopFinalMusic } = useFinalJeopardyMusic();
+  
+  // Victory sound for winner announcement
+  const { play: playVictorySound } = useVictorySound();
   
   // Mute state for announcer
   const [isMuted, setIsMuted] = useState(false);
@@ -430,6 +438,25 @@ export default function GamePage({ params }: GamePageProps) {
     speakResult(announcement);
   }, [gameState.phase, gameState.lastResult, board, speakResult, isMuted]);
 
+  // Play Final Jeopardy music during final jeopardy phases
+  useEffect(() => {
+    const isFinalJeopardyPhase = 
+      gameState.phase === "final_wager" || 
+      gameState.phase === "final_answering" || 
+      gameState.phase === "final_revealing";
+
+    if (isFinalJeopardyPhase && !isMuted) {
+      playFinalMusic();
+    } else {
+      stopFinalMusic();
+    }
+
+    // Cleanup on unmount
+    return () => {
+      stopFinalMusic();
+    };
+  }, [gameState.phase, isMuted, playFinalMusic, stopFinalMusic]);
+
   // Announce the winner when game finishes
   const hasAnnouncedWinner = useRef(false);
   useEffect(() => {
@@ -457,10 +484,12 @@ export default function GamePage({ params }: GamePageProps) {
     const winner = sortedPlayers[0];
 
     if (winner) {
+      // Play victory fanfare
+      playVictorySound();
       const announcement = `Game over! The winner is ${winner.name} with ${winner.score ?? 0} points. Congratulations!`;
       speakResult(announcement);
     }
-  }, [gameState.phase, gameState.finalWagers, players, speakResult, isMuted]);
+  }, [gameState.phase, gameState.finalWagers, players, speakResult, isMuted, playVictorySound]);
 
   const handleClueSelect = async (clue: Clue) => {
     if (gameState.revealedIds.includes(clue.id)) {
