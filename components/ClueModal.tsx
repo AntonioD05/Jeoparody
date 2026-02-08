@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef } from "react";
 import type { Clue } from "../types/game";
+import { useVoiceover } from "../hooks/useVoiceover";
 
 type ClueModalProps = {
   clue: Clue | null;
@@ -26,12 +27,17 @@ export default function ClueModal({
 }: ClueModalProps) {
   const [answer, setAnswer] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
+  const { speak, stop, isLoading, isPlaying } = useVoiceover();
 
   useEffect(() => {
-    if (isOpen) {
+    if (isOpen && clue) {
       setAnswer("");
+      // Narrate the question
+      speak(clue.question);
       // Focus input when modal opens
       setTimeout(() => inputRef.current?.focus(), 100);
+    } else {
+      stop();
     }
   }, [isOpen, clue?.id]);
 
@@ -56,9 +62,20 @@ export default function ClueModal({
       <div className="relative w-full max-w-2xl rounded-3xl border border-slate-800 bg-slate-950 p-8 text-slate-100 shadow-2xl">
         <div className="flex items-start justify-between gap-6">
           <div>
-            <p className="text-xs uppercase tracking-[0.3em] text-slate-400">
-              {clue.value} points
-            </p>
+            <div className="flex items-center gap-2">
+              <p className="text-xs uppercase tracking-[0.3em] text-slate-400">
+                {clue.value} points
+              </p>
+              {(isLoading || isPlaying) && (
+                <span className="flex items-center gap-1.5 text-xs text-amber-400">
+                  <span className="relative flex h-2 w-2">
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75"></span>
+                    <span className="relative inline-flex h-2 w-2 rounded-full bg-amber-500"></span>
+                  </span>
+                  {isLoading ? "Loading..." : "Speaking"}
+                </span>
+              )}
+            </div>
             <h3 className="mt-3 text-2xl font-semibold text-white">
               {clue.question}
             </h3>
