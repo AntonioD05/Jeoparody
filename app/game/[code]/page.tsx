@@ -660,10 +660,10 @@ export default function GamePage({ params }: GamePageProps) {
 
             <button
               onClick={handleContinue}
-              disabled={isSubmitting}
+              disabled={isSubmitting || !isMyTurn}
               className="mt-6 w-full rounded-xl border border-amber-400/40 bg-amber-400/10 px-4 py-3 text-sm font-semibold text-amber-100 transition hover:border-amber-300 hover:text-amber-50 disabled:opacity-50"
             >
-              {isSubmitting ? "Loading..." : "Continue"}
+              {isSubmitting ? "Loading..." : !isMyTurn ? "Waiting for current player..." : "Continue"}
             </button>
           </div>
         </div>
@@ -674,14 +674,14 @@ export default function GamePage({ params }: GamePageProps) {
         clue={selectedClue}
         isOpen={Boolean(selectedClue) && gameState.phase === "answering"}
         onClose={() => {
-          // Only host can close/skip during answering
-          if (isHost) {
+          // Only current player can close/skip during answering
+          if (isMyTurn) {
             handleSkip();
           }
         }}
         onSubmit={handleSubmitAnswer}
         isSubmitting={isSubmitting}
-        canSkip={isHost}
+        canSkip={isMyTurn}
         onSkip={handleSkip}
         canAnswer={isMyTurn}
       />

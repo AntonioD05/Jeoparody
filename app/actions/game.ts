@@ -230,7 +230,7 @@ export async function submitAnswer(
 
 /**
  * Continue to next clue selection after revealing answer
- * Only the turn player or host can advance
+ * Only the turn player can advance
  */
 export async function continueGame(
   roomCode: string
@@ -268,13 +268,12 @@ export async function continueGame(
     return { error: "Cannot continue right now" };
   }
 
-  // Only turn player or host can continue
-  const isHost = currentPlayerId === room.host_id;
+  // Only turn player can continue
   const isTurnPlayer = currentPlayerId === game.turn_player_id;
   const lastResult = game.last_result as LastResult | null;
 
-  if (!isHost && !isTurnPlayer) {
-    return { error: "Only the turn player or host can continue" };
+  if (!isTurnPlayer) {
+    return { error: "Only the current player can continue" };
   }
 
   // Get all players in order
@@ -320,7 +319,7 @@ export async function continueGame(
 
 /**
  * Skip the current clue (no one answered correctly)
- * Only host can skip
+ * Only the turn player can skip
  */
 export async function skipClue(
   roomCode: string
@@ -335,16 +334,12 @@ export async function skipClue(
   // Get room
   const { data: room } = await supabase
     .from("rooms")
-    .select("id, host_id")
+    .select("id")
     .eq("code", roomCode)
     .single();
 
   if (!room) {
     return { error: "Room not found" };
-  }
-
-  if (room.host_id !== currentPlayerId) {
-    return { error: "Only the host can skip clues" };
   }
 
   // Get game state
@@ -360,6 +355,11 @@ export async function skipClue(
 
   if (game.phase !== "answering") {
     return { error: "Cannot skip right now" };
+  }
+
+  // Only turn player can skip
+  if (currentPlayerId !== game.turn_player_id) {
+    return { error: "Only the current player can skip" };
   }
 
   if (!game.selected_clue_id) {
