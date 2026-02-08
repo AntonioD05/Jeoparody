@@ -584,51 +584,7 @@ export default function GamePage({ params }: GamePageProps) {
               />
             )}
 
-            {/* Result display */}
-            {gameState.phase === "revealing" && gameState.lastResult && selectedClueDetails && (
-              <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6">
-                <div className="flex flex-wrap items-center gap-3">
-                  <span
-                    className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] ${
-                      gameState.lastResult.isCorrect
-                        ? "bg-emerald-400/10 text-emerald-200"
-                        : "bg-rose-400/10 text-rose-200"
-                    }`}
-                  >
-                    {gameState.lastResult.isCorrect ? "Correct" : "Wrong"}
-                  </span>
-                  <span className="text-sm text-slate-300">
-                    {gameState.lastResult.playerName} answered for {selectedClueDetails.value} points
-                    {gameState.lastResult.isCorrect 
-                      ? ` (+${gameState.lastResult.pointsDelta})` 
-                      : ` (${gameState.lastResult.pointsDelta})`
-                    }
-                  </span>
-                </div>
-                <div className="mt-4 rounded-xl border border-slate-800 bg-slate-950/40 p-4">
-                  <p className="text-xs text-slate-400 uppercase tracking-wide mb-2">Question</p>
-                  <p className="text-sm text-slate-200 mb-4">{selectedClueDetails.question}</p>
-                  <p className="text-xs text-slate-400 uppercase tracking-wide mb-2">Answer</p>
-                  <p className="text-sm font-semibold text-white">
-                    {selectedClueDetails.answer}
-                  </p>
-                  {selectedClueDetails.sourceSnippet && (
-                    <p className="mt-2 text-xs text-slate-400">
-                      {selectedClueDetails.sourceSnippet}
-                    </p>
-                  )}
-                </div>
-                <div className="mt-4 flex gap-3">
-                  <button
-                    onClick={handleContinue}
-                    disabled={isSubmitting}
-                    className="rounded-xl border border-amber-400/40 bg-amber-400/10 px-4 py-2 text-sm font-semibold text-amber-100 transition hover:border-amber-300 hover:text-amber-50 disabled:opacity-50"
-                  >
-                    Continue
-                  </button>
-                </div>
-              </div>
-            )}
+            {/* Result display - removed, now in modal below */}
 
             {/* Game over display */}
             {gameState.phase === "finished" && (
@@ -654,6 +610,64 @@ export default function GamePage({ params }: GamePageProps) {
           </div>
         </section>
       </main>
+
+      {/* Result Modal - shows after answering */}
+      {gameState.phase === "revealing" && gameState.lastResult && selectedClueDetails && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4 py-10">
+          <div className="absolute inset-0 bg-slate-950/70 backdrop-blur-sm" />
+          <div className="relative w-full max-w-2xl rounded-3xl border border-slate-800 bg-slate-950 p-8 text-slate-100 shadow-2xl">
+            <div className="flex items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <span
+                  className={`rounded-full px-4 py-1.5 text-sm font-semibold uppercase tracking-[0.2em] ${
+                    gameState.lastResult.isCorrect
+                      ? "bg-emerald-400/20 text-emerald-200"
+                      : "bg-rose-400/20 text-rose-200"
+                  }`}
+                >
+                  {gameState.lastResult.isCorrect ? "Correct!" : "Wrong"}
+                </span>
+              </div>
+              <p className="text-xs uppercase tracking-[0.3em] text-slate-400">
+                {selectedClueDetails.value} points
+              </p>
+            </div>
+            
+            <div className="mt-4 text-sm text-slate-300">
+              {gameState.lastResult.playerName} answered
+              {gameState.lastResult.isCorrect 
+                ? <span className="text-emerald-300"> (+${gameState.lastResult.pointsDelta})</span>
+                : <span className="text-rose-300"> (${gameState.lastResult.pointsDelta})</span>
+              }
+            </div>
+
+            <div className="mt-6 rounded-xl border border-slate-800 bg-slate-900/60 p-5">
+              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400 mb-2">Question</p>
+              <p className="text-lg text-white">{selectedClueDetails.question}</p>
+            </div>
+
+            <div className="mt-4 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-5">
+              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-300 mb-2">Answer</p>
+              <p className="text-lg font-semibold text-emerald-100">
+                {selectedClueDetails.answer}
+              </p>
+              {selectedClueDetails.sourceSnippet && (
+                <p className="mt-3 text-xs text-slate-400">
+                  {selectedClueDetails.sourceSnippet}
+                </p>
+              )}
+            </div>
+
+            <button
+              onClick={handleContinue}
+              disabled={isSubmitting}
+              className="mt-6 w-full rounded-xl border border-amber-400/40 bg-amber-400/10 px-4 py-3 text-sm font-semibold text-amber-100 transition hover:border-amber-300 hover:text-amber-50 disabled:opacity-50"
+            >
+              {isSubmitting ? "Loading..." : "Continue"}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Clue Modal for answering - only turn player can answer */}
       <ClueModal
