@@ -31,12 +31,22 @@ export default function RoomPage({ params }: RoomPageProps) {
   const [board, setBoard] = useState<Board | null>(null);
   const [manualRoomId, setManualRoomId] = useState("");
   const [hostLeft, setHostLeft] = useState(false);
+  const [roomNotFound, setRoomNotFound] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [currentPlayerId, setCurrentPlayerId] = useState<string | null>(null);
 
   // Fetch room and players on mount
   useEffect(() => {
     const supabase = createClient();
 
     async function fetchRoomAndPlayers() {
+      // Get current player ID from cookie
+      const playerRes = await fetch(`/api/current-player?roomCode=${code}`);
+      if (playerRes.ok) {
+        const { playerId } = await playerRes.json();
+        setCurrentPlayerId(playerId);
+      }
+
       // Get room by code
       const { data: room } = await supabase
         .from("rooms")
@@ -44,7 +54,11 @@ export default function RoomPage({ params }: RoomPageProps) {
         .eq("code", code)
         .single();
 
-      if (!room) return;
+      if (!room) {
+        setRoomNotFound(true);
+        setIsLoading(false);
+        return;
+      }
 
       setRoomId(room.id);
       setHostId(room.host_id);
@@ -66,6 +80,8 @@ export default function RoomPage({ params }: RoomPageProps) {
           }))
         );
       }
+
+      setIsLoading(false);
     }
 
     fetchRoomAndPlayers();
@@ -134,27 +150,95 @@ export default function RoomPage({ params }: RoomPageProps) {
         config: { presence: { key: playerId } },
       });
 
-      channel
-        .on("presence", { event: "leave" }, async ({ leftPresences }) => {
-          // When someone leaves, handle cleanup
-          for (const presence of leftPresences) {
-            const leftPlayerId = presence.player_id;
-            if (!leftPlayerId) continue;
+      // Helper to clean up disconnected players
+      const cleanupDisconnectedPlayers = async () => {
+        const presenceState = channel.presenceState();
+        const presentPlayerIds = new Set<string>();
+        
+        // Collect all player IDs currently in presence
+        for (const presences of Object.values(presenceState)) {
+          for (const presence of presences as { player_id: string }[]) {
+            if (presence.player_id) {
+              presentPlayerIds.add(presence.player_id);
+            }
+          }
+        }
 
-            // Check if the leaving player was the host
+        // Get all players in the room from database
+        const { data: dbPlayers } = await supabase
+          .from("players")
+          .select("id")
+          .eq("room_id", roomId);
+
+        if (!dbPlayers) return;
+
+        // Find players in DB but not in presence (disconnected)
+        for (const dbPlayer of dbPlayers) {
+          if (!presentPlayerIds.has(dbPlayer.id) && dbPlayer.id !== currentPlayerId) {
+            // This player is in DB but not tracked in presence - they've disconnected
+            
+            // Check if they're the host
             const { data: room } = await supabase
               .from("rooms")
               .select("host_id")
               .eq("id", roomId)
               .single();
 
-            if (room?.host_id === leftPlayerId) {
-              // Host left - delete the room (cascade deletes all players)
+            if (!room) return;
+
+            if (room.host_id === dbPlayer.id) {
+              // Host left - delete the room
               await supabase.from("rooms").delete().eq("id", roomId);
+              return;
             } else {
-              // Non-host left - just delete that player
-              await supabase.from("players").delete().eq("id", leftPlayerId);
+              // Non-host left - delete that player
+              await supabase.from("players").delete().eq("id", dbPlayer.id);
             }
+          }
+        }
+      };
+
+      channel
+        .on("presence", { event: "sync" }, () => {
+          // On every sync, check for disconnected players after a delay
+          setTimeout(cleanupDisconnectedPlayers, 5000);
+        })
+        .on("presence", { event: "leave" }, async ({ leftPresences }) => {
+          // When someone leaves, handle cleanup after a delay
+          for (const presence of leftPresences) {
+            const leftPlayerId = presence.player_id;
+            if (!leftPlayerId) continue;
+
+            // Wait before deleting to allow for reconnection
+            setTimeout(async () => {
+              // Check if player has reconnected
+              const presenceState = channel.presenceState();
+              const isStillPresent = Object.values(presenceState).some(
+                (presences) =>
+                  (presences as { player_id: string }[]).some(
+                    (p) => p.player_id === leftPlayerId
+                  )
+              );
+
+              if (isStillPresent) {
+                return;
+              }
+
+              // Check if the leaving player was the host
+              const { data: room } = await supabase
+                .from("rooms")
+                .select("host_id")
+                .eq("id", roomId)
+                .single();
+
+              if (!room) return;
+
+              if (room.host_id === leftPlayerId) {
+                await supabase.from("rooms").delete().eq("id", roomId);
+              } else {
+                await supabase.from("players").delete().eq("id", leftPlayerId);
+              }
+            }, 5000);
           }
         })
         .subscribe(async (status) => {
@@ -165,12 +249,22 @@ export default function RoomPage({ params }: RoomPageProps) {
         });
 
       presenceChannelRef.current = channel;
+
+      // Periodic cleanup check every 10 seconds as a fallback
+      const cleanupInterval = setInterval(() => {
+        cleanupDisconnectedPlayers();
+      }, 10000);
+
+      // Store interval for cleanup
+      (channel as unknown as { _cleanupInterval: NodeJS.Timeout })._cleanupInterval = cleanupInterval;
     }
 
     setupPresence();
 
     return () => {
       if (presenceChannelRef.current) {
+        const interval = (presenceChannelRef.current as unknown as { _cleanupInterval?: NodeJS.Timeout })._cleanupInterval;
+        if (interval) clearInterval(interval);
         supabase.removeChannel(presenceChannelRef.current);
       }
     };
@@ -286,6 +380,51 @@ export default function RoomPage({ params }: RoomPageProps) {
     }
   };
 
+  if (isLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-950 text-white">
+        <div className="text-center">
+          <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-slate-700 border-t-amber-400"></div>
+          <p className="mt-4 text-sm text-slate-400">Loading room...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (roomNotFound) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-950 px-6 text-white">
+        <div className="mx-4 max-w-md text-center">
+          <div className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-full bg-rose-500/20">
+            <svg
+              className="h-10 w-10 text-rose-400"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+              />
+            </svg>
+          </div>
+          <h1 className="text-2xl font-bold text-white">Room Not Found</h1>
+          <p className="mt-3 text-slate-400">
+            The room code <span className="font-mono text-rose-400">{code}</span> does not exist or has been closed.
+          </p>
+          <button
+            onClick={() => router.push("/")}
+            className="mt-8 rounded-full border border-amber-400/50 bg-amber-400/10 px-8 py-3 text-sm font-semibold uppercase tracking-[0.2em] text-amber-200 transition hover:bg-amber-400/20"
+          >
+            Back to Home
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-950 px-6 py-12 text-white">
       {hostLeft && (
@@ -349,30 +488,40 @@ export default function RoomPage({ params }: RoomPageProps) {
         <section className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
           <PlayerList players={players} />
           <div className="flex flex-col gap-4">
-            <HostControls
-              canStart={Boolean(selectedFile) && Boolean(manualRoomId.trim())}
-              onStart={handleGenerateBoard}
-              onFileSelect={setSelectedFile}
-              fileName={selectedFile?.name ?? null}
-              isGenerating={isGenerating}
-              error={error}
-              roomId={manualRoomId}
-              onRoomIdChange={
-                roomId ? undefined : (value) => setManualRoomId(value)
-              }
-            />
-            <div className="rounded-2xl border border-dashed border-slate-700 bg-slate-900/40 p-5 text-sm text-slate-300">
-              <p className="font-semibold text-white">Next steps</p>
-              <p className="mt-2 text-slate-300">
-                Upload a trivia PDF to generate the board, then start the game
-                when everyone is ready.
-              </p>
-            </div>
-            {!selectedFile ? (
-              <div className="rounded-2xl border border-amber-400/30 bg-amber-400/10 p-4 text-sm text-amber-100">
-                Waiting for host to upload a PDF.
+            {currentPlayerId && hostId && currentPlayerId === hostId ? (
+              <HostControls
+                canStart={Boolean(selectedFile) && Boolean(manualRoomId.trim())}
+                onStart={handleGenerateBoard}
+                onFileSelect={setSelectedFile}
+                fileName={selectedFile?.name ?? null}
+                isGenerating={isGenerating}
+                error={error}
+                roomId={manualRoomId}
+                onRoomIdChange={
+                  roomId ? undefined : (value) => setManualRoomId(value)
+                }
+              />
+            ) : (
+              <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6">
+                <h2 className="text-lg font-semibold text-white">Waiting for Host</h2>
+                <p className="mt-2 text-sm text-slate-400">
+                  The host will upload a PDF and start the game.
+                </p>
               </div>
-            ) : null}
+            )}
+            {currentPlayerId === hostId ? (
+              <div className="rounded-2xl border border-dashed border-slate-700 bg-slate-900/40 p-5 text-sm text-slate-300">
+                <p className="font-semibold text-white">Next steps</p>
+                <p className="mt-2 text-slate-300">
+                  Upload a trivia PDF to generate the board, then start the game
+                  when everyone is ready.
+                </p>
+              </div>
+            ) : (
+              <div className="rounded-2xl border border-amber-400/30 bg-amber-400/10 p-4 text-sm text-amber-100">
+                Waiting for host to upload a PDF and start the game.
+              </div>
+            )}
           </div>
         </section>
         {board ? (
