@@ -442,14 +442,25 @@ export default function GamePage({ params }: GamePageProps) {
     }
     hasAnnouncedWinner.current = true;
 
-    const sortedPlayers = [...players].sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+    // Calculate final scores by applying Final Jeopardy wager results
+    // This ensures we have accurate scores even if the players state hasn't updated yet
+    const playersWithFinalScores = players.map((player) => {
+      const wager = gameState.finalWagers.find((w) => w.playerId === player.id);
+      if (wager && wager.validated && wager.isCorrect !== undefined) {
+        const scoreDelta = wager.isCorrect ? wager.wager : -wager.wager;
+        return { ...player, score: (player.score ?? 0) + scoreDelta };
+      }
+      return player;
+    });
+
+    const sortedPlayers = [...playersWithFinalScores].sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
     const winner = sortedPlayers[0];
 
     if (winner) {
       const announcement = `Game over! The winner is ${winner.name} with ${winner.score ?? 0} points. Congratulations!`;
       speakResult(announcement);
     }
-  }, [gameState.phase, players, speakResult, isMuted]);
+  }, [gameState.phase, gameState.finalWagers, players, speakResult, isMuted]);
 
   const handleClueSelect = async (clue: Clue) => {
     if (gameState.revealedIds.includes(clue.id)) {
@@ -918,13 +929,25 @@ export default function GamePage({ params }: GamePageProps) {
                 )}
               </div>
               <p className="mt-4 text-lg text-slate-300">
-                {players.length > 0 && (
-                  <>
-                    Winner: <span className="font-semibold text-white">
-                      {[...players].sort((a, b) => (b.score ?? 0) - (a.score ?? 0))[0]?.name}
-                    </span> with {[...players].sort((a, b) => (b.score ?? 0) - (a.score ?? 0))[0]?.score ?? 0} points!
-                  </>
-                )}
+                {players.length > 0 && (() => {
+                  // Calculate final scores including Final Jeopardy results
+                  const playersWithFinalScores = players.map((player) => {
+                    const wager = gameState.finalWagers.find((w) => w.playerId === player.id);
+                    if (wager && wager.validated && wager.isCorrect !== undefined) {
+                      const scoreDelta = wager.isCorrect ? wager.wager : -wager.wager;
+                      return { ...player, score: (player.score ?? 0) + scoreDelta };
+                    }
+                    return player;
+                  });
+                  const winner = [...playersWithFinalScores].sort((a, b) => (b.score ?? 0) - (a.score ?? 0))[0];
+                  return (
+                    <>
+                      Winner: <span className="font-semibold text-white">
+                        {winner?.name}
+                      </span> with {winner?.score ?? 0} points!
+                    </>
+                  );
+                })()}
               </p>
               <button
                 onClick={async () => {
