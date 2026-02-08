@@ -91,7 +91,7 @@ export default function RoomPage({ params }: RoomPageProps) {
     }
 
     fetchRoomAndPlayers();
-  }, [code]);
+  }, [code, router]);
 
   // Subscribe to realtime player changes
   useEffect(() => {
