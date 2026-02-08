@@ -103,13 +103,13 @@ export default function RoomPage({ params }: RoomPageProps) {
       .on(
         "postgres_changes",
         {
-          event: "*",
+          event: "INSERT",
           schema: "public",
           table: "players",
           filter: `room_id=eq.${roomId}`,
         },
         async () => {
-          // Refetch all players on any change
+          // Refetch all players when a new player joins
           const { data: playersData } = await supabase
             .from("players")
             .select("id, name, score")
@@ -128,7 +128,67 @@ export default function RoomPage({ params }: RoomPageProps) {
           }
         }
       )
-      .subscribe();
+      .on(
+        "postgres_changes",
+        {
+          event: "DELETE",
+          schema: "public",
+          table: "players",
+          filter: `room_id=eq.${roomId}`,
+        },
+        async () => {
+          // Refetch all players when a player leaves
+          const { data: playersData } = await supabase
+            .from("players")
+            .select("id, name, score")
+            .eq("room_id", roomId)
+            .order("joined_at", { ascending: true });
+
+          if (playersData) {
+            setPlayers(
+              playersData.map((p) => ({
+                id: p.id,
+                name: p.name,
+                score: p.score ?? 0,
+                isHost: p.id === hostId,
+              }))
+            );
+          }
+        }
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "players",
+          filter: `room_id=eq.${roomId}`,
+        },
+        async () => {
+          // Refetch all players when a player is updated
+          const { data: playersData } = await supabase
+            .from("players")
+            .select("id, name, score")
+            .eq("room_id", roomId)
+            .order("joined_at", { ascending: true });
+
+          if (playersData) {
+            setPlayers(
+              playersData.map((p) => ({
+                id: p.id,
+                name: p.name,
+                score: p.score ?? 0,
+                isHost: p.id === hostId,
+              }))
+            );
+          }
+        }
+      )
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") {
+          console.log("Subscribed to player changes for room:", roomId);
+        }
+      });
 
     return () => {
       supabase.removeChannel(channel);
