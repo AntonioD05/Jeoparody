@@ -783,43 +783,6 @@ export default function GamePage({ params }: GamePageProps) {
               />
             )}
 
-            {/* Result display - removed, now in modal below */}
-
-            {/* Game over display */}
-            {gameState.phase === "finished" && (
-              <div className="rounded-2xl border border-amber-400/30 bg-gradient-to-br from-amber-400/10 to-transparent p-8 text-center">
-                <div className="flex items-center justify-center gap-3">
-                  <h2 className="text-2xl font-bold text-amber-100">Game Over!</h2>
-                  {(isResultLoading || isResultPlaying) && (
-                    <span className="flex items-center gap-1.5 text-xs text-amber-400">
-                      <span className="relative flex h-2 w-2">
-                        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75"></span>
-                        <span className="relative inline-flex h-2 w-2 rounded-full bg-amber-500"></span>
-                      </span>
-                      {isResultLoading ? "Loading..." : "Speaking"}
-                    </span>
-                  )}
-                </div>
-                <p className="mt-2 text-slate-300">
-                  {players.length > 0 && (
-                    <>
-                      Winner: <span className="font-semibold text-white">
-                        {[...players].sort((a, b) => (b.score ?? 0) - (a.score ?? 0))[0]?.name}
-                      </span> with {[...players].sort((a, b) => (b.score ?? 0) - (a.score ?? 0))[0]?.score ?? 0} points!
-                    </>
-                  )}
-                </p>
-                <button
-                  onClick={async () => {
-                    await cleanupFinishedGame(code);
-                    router.push("/");
-                  }}
-                  className="mt-6 rounded-full border border-amber-400/50 bg-amber-400/10 px-8 py-3 text-sm font-semibold uppercase tracking-[0.2em] text-amber-200 transition hover:bg-amber-400/20"
-                >
-                  Back to Home
-                </button>
-              </div>
-            )}
           </div>
         </section>
       </main>
@@ -931,6 +894,47 @@ export default function GamePage({ params }: GamePageProps) {
           isSubmitting={isSubmitting}
           isMuted={isMuted}
         />
+      )}
+
+      {/* Winner Modal - Game Over */}
+      {gameState.phase === "finished" && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4 py-10">
+          <div className="absolute inset-0 bg-slate-950/70 backdrop-blur-sm" />
+          <div className="relative w-full max-w-lg rounded-3xl border border-amber-400/30 bg-slate-950 p-8 text-slate-100 shadow-2xl">
+            <div className="flex flex-col items-center text-center">
+              <div className="flex items-center justify-center gap-3">
+                <h2 className="text-3xl font-bold text-amber-100">🎉 Game Over!</h2>
+                {(isResultLoading || isResultPlaying) && (
+                  <span className="flex items-center gap-1.5 text-xs text-amber-400">
+                    <span className="relative flex h-2 w-2">
+                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75"></span>
+                      <span className="relative inline-flex h-2 w-2 rounded-full bg-amber-500"></span>
+                    </span>
+                    {isResultLoading ? "Loading..." : "Speaking"}
+                  </span>
+                )}
+              </div>
+              <p className="mt-4 text-lg text-slate-300">
+                {players.length > 0 && (
+                  <>
+                    Winner: <span className="font-semibold text-white">
+                      {[...players].sort((a, b) => (b.score ?? 0) - (a.score ?? 0))[0]?.name}
+                    </span> with {[...players].sort((a, b) => (b.score ?? 0) - (a.score ?? 0))[0]?.score ?? 0} points!
+                  </>
+                )}
+              </p>
+              <button
+                onClick={async () => {
+                  await cleanupFinishedGame(code);
+                  router.push("/");
+                }}
+                className="mt-8 rounded-full border border-amber-400/50 bg-amber-400/10 px-8 py-3 text-sm font-semibold uppercase tracking-[0.2em] text-amber-200 transition hover:bg-amber-400/20"
+              >
+                Back to Home
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
