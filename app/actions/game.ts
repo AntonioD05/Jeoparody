@@ -225,6 +225,14 @@ export async function submitAnswer(
     return { error: "Failed to update game state" };
   }
 
+  // If game is finished, also update room status
+  if (isFinished) {
+    await supabase
+      .from("rooms")
+      .update({ status: "finished" })
+      .eq("id", room.id);
+  }
+
   return { error: null };
 }
 
@@ -401,6 +409,52 @@ export async function skipClue(
 
   if (updateError) {
     return { error: "Failed to skip clue" };
+  }
+
+  // If game is finished, also update room status
+  if (isFinished) {
+    await supabase
+      .from("rooms")
+      .update({ status: "finished" })
+      .eq("id", room.id);
+  }
+
+  return { error: null };
+}
+
+/**
+ * Clean up a finished game - deletes room, players, and game data
+ */
+export async function cleanupFinishedGame(
+  roomCode: string
+): Promise<{ error: string | null }> {
+  const supabase = await createClient();
+
+  // Get room
+  const { data: room } = await supabase
+    .from("rooms")
+    .select("id, status")
+    .eq("code", roomCode)
+    .single();
+
+  if (!room) {
+    // Room already deleted, that's fine
+    return { error: null };
+  }
+
+  // Only clean up finished games
+  if (room.status !== "finished") {
+    return { error: "Game is not finished" };
+  }
+
+  // Delete room - this cascades to players and games
+  const { error: deleteError } = await supabase
+    .from("rooms")
+    .delete()
+    .eq("id", room.id);
+
+  if (deleteError) {
+    return { error: "Failed to clean up game data" };
   }
 
   return { error: null };

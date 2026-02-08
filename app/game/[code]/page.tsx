@@ -7,7 +7,7 @@ import JeopardyBoard from "../../../components/JeopardyBoard";
 import Scoreboard from "../../../components/Scoreboard";
 import StatusBadge from "../../../components/StatusBadge";
 import { createClient } from "../../../utils/supabase/client";
-import { selectClue, submitAnswer, continueGame, skipClue } from "../../actions/game";
+import { selectClue, submitAnswer, continueGame, skipClue, cleanupFinishedGame } from "../../actions/game";
 import type { Board as RawBoard } from "../../../types/board-schema";
 import type { Board, Clue, Player } from "../../../types/game";
 
@@ -600,7 +600,10 @@ export default function GamePage({ params }: GamePageProps) {
                   )}
                 </p>
                 <button
-                  onClick={() => router.push("/")}
+                  onClick={async () => {
+                    await cleanupFinishedGame(code);
+                    router.push("/");
+                  }}
                   className="mt-6 rounded-full border border-amber-400/50 bg-amber-400/10 px-8 py-3 text-sm font-semibold uppercase tracking-[0.2em] text-amber-200 transition hover:bg-amber-400/20"
                 >
                   Back to Home
