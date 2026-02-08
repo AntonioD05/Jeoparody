@@ -13,6 +13,7 @@ type ClueModalProps = {
   canSkip?: boolean;
   onSkip?: () => void;
   canAnswer?: boolean;
+  isMuted?: boolean;
 };
 
 export default function ClueModal({
@@ -24,6 +25,7 @@ export default function ClueModal({
   canSkip = false,
   onSkip,
   canAnswer = true,
+  isMuted = false,
 }: ClueModalProps) {
   const [answer, setAnswer] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
@@ -32,14 +34,16 @@ export default function ClueModal({
   useEffect(() => {
     if (isOpen && clue) {
       setAnswer("");
-      // Narrate the question
-      speak(clue.question);
+      // Narrate the question (unless muted)
+      if (!isMuted) {
+        speak(clue.question);
+      }
       // Focus input when modal opens
       setTimeout(() => inputRef.current?.focus(), 100);
     } else {
       stop();
     }
-  }, [isOpen, clue?.id]);
+  }, [isOpen, clue?.id, isMuted]);
 
   if (!isOpen || !clue) {
     return null;
@@ -66,7 +70,7 @@ export default function ClueModal({
               <p className="text-xs uppercase tracking-[0.3em] text-slate-400">
                 {clue.value} points
               </p>
-              {(isLoading || isPlaying) && (
+              {!isMuted && (isLoading || isPlaying) && (
                 <span className="flex items-center gap-1.5 text-xs text-amber-400">
                   <span className="relative flex h-2 w-2">
                     <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75"></span>

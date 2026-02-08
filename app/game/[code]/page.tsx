@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useEffect, useState, useCallback } from "react";
+import { use, useEffect, useState, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import ClueModal from "../../../components/ClueModal";
 import JeopardyBoard from "../../../components/JeopardyBoard";
@@ -8,6 +8,7 @@ import Scoreboard from "../../../components/Scoreboard";
 import StatusBadge from "../../../components/StatusBadge";
 import { createClient } from "../../../utils/supabase/client";
 import { selectClue, submitAnswer, continueGame, skipClue, cleanupFinishedGame } from "../../actions/game";
+import { useVoiceover } from "../../../hooks/useVoiceover";
 import type { Board as RawBoard } from "../../../types/board-schema";
 import type { Board, Clue, Player } from "../../../types/game";
 
@@ -61,6 +62,13 @@ export default function GamePage({ params }: GamePageProps) {
   const [selectedClue, setSelectedClue] = useState<Clue | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  
+  // Voiceover for result announcements
+  const { speak: speakResult, stop: stopResult, isLoading: isResultLoading, isPlaying: isResultPlaying } = useVoiceover();
+  const lastAnnouncedClueId = useRef<string | null>(null);
+  
+  // Mute state for announcer
+  const [isMuted, setIsMuted] = useState(false);
 
   const normalizeBoard = useCallback((raw: RawBoard): Board => {
     return {
@@ -350,6 +358,60 @@ export default function GamePage({ params }: GamePageProps) {
     };
   }, [roomId, router, code]);
 
+  // Announce result with voiceover when revealing phase starts
+  useEffect(() => {
+    if (gameState.phase !== "revealing" || !gameState.lastResult || !board || isMuted) {
+      return;
+    }
+
+    // Avoid re-announcing the same clue
+    if (lastAnnouncedClueId.current === gameState.lastResult.clueId) {
+      return;
+    }
+    lastAnnouncedClueId.current = gameState.lastResult.clueId;
+
+    // Find the clue details
+    const clue = board.categories
+      .flatMap((cat) => cat.clues)
+      .find((c) => c.id === gameState.lastResult?.clueId);
+
+    if (!clue) return;
+
+    // Build the announcement
+    const correctness = gameState.lastResult.isCorrect
+      ? "Correct!"
+      : "Incorrect.";
+    const answerPart = `The answer is: ${clue.answer}.`;
+    const explanationPart = clue.sourceSnippet ? clue.sourceSnippet : "";
+
+    const announcement = [correctness, answerPart, explanationPart]
+      .filter(Boolean)
+      .join(" ");
+
+    speakResult(announcement);
+  }, [gameState.phase, gameState.lastResult, board, speakResult, isMuted]);
+
+  // Announce the winner when game finishes
+  const hasAnnouncedWinner = useRef(false);
+  useEffect(() => {
+    if (gameState.phase !== "finished" || players.length === 0 || isMuted) {
+      return;
+    }
+
+    if (hasAnnouncedWinner.current) {
+      return;
+    }
+    hasAnnouncedWinner.current = true;
+
+    const sortedPlayers = [...players].sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+    const winner = sortedPlayers[0];
+
+    if (winner) {
+      const announcement = `Game over! The winner is ${winner.name} with ${winner.score ?? 0} points. Congratulations!`;
+      speakResult(announcement);
+    }
+  }, [gameState.phase, players, speakResult, isMuted]);
+
   const handleClueSelect = async (clue: Clue) => {
     if (gameState.revealedIds.includes(clue.id)) {
       return;
@@ -530,6 +592,32 @@ export default function GamePage({ params }: GamePageProps) {
               <StatusBadge 
                 label={gameState.phase === "finished" ? "Game Over" : "Playing"} 
               />
+              <button
+                onClick={() => {
+                  setIsMuted(!isMuted);
+                  if (!isMuted) {
+                    stopResult();
+                  }
+                }}
+                className={`flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-[0.15em] transition ${
+                  isMuted
+                    ? "border-rose-500/50 bg-rose-500/10 text-rose-300 hover:bg-rose-500/20"
+                    : "border-slate-700 bg-slate-800/50 text-slate-300 hover:border-amber-400/50 hover:text-amber-200"
+                }`}
+                title={isMuted ? "Unmute announcer" : "Mute announcer"}
+              >
+                {isMuted ? (
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-3.5 w-3.5">
+                    <path d="M13.5 4.06c0-1.336-1.616-2.005-2.56-1.06l-4.5 4.5H4.508c-1.141 0-2.318.664-2.66 1.905A9.76 9.76 0 001.5 12c0 .898.121 1.768.35 2.595.341 1.24 1.518 1.905 2.659 1.905h1.93l4.5 4.5c.945.945 2.561.276 2.561-1.06V4.06zM17.78 9.22a.75.75 0 10-1.06 1.06L18.44 12l-1.72 1.72a.75.75 0 001.06 1.06l1.72-1.72 1.72 1.72a.75.75 0 101.06-1.06L20.56 12l1.72-1.72a.75.75 0 00-1.06-1.06l-1.72 1.72-1.72-1.72z" />
+                  </svg>
+                ) : (
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-3.5 w-3.5">
+                    <path d="M13.5 4.06c0-1.336-1.616-2.005-2.56-1.06l-4.5 4.5H4.508c-1.141 0-2.318.664-2.66 1.905A9.76 9.76 0 001.5 12c0 .898.121 1.768.35 2.595.341 1.24 1.518 1.905 2.659 1.905h1.93l4.5 4.5c.945.945 2.561.276 2.561-1.06V4.06zM18.584 5.106a.75.75 0 011.06 0c3.808 3.807 3.808 9.98 0 13.788a.75.75 0 11-1.06-1.06 8.25 8.25 0 000-11.668.75.75 0 010-1.06z" />
+                    <path d="M15.932 7.757a.75.75 0 011.061 0 6 6 0 010 8.486.75.75 0 01-1.06-1.061 4.5 4.5 0 000-6.364.75.75 0 010-1.06z" />
+                  </svg>
+                )}
+                {isMuted ? "Muted" : "Sound"}
+              </button>
             </div>
           </div>
           <div className="flex flex-col items-end gap-2 text-sm text-slate-300">
@@ -589,7 +677,18 @@ export default function GamePage({ params }: GamePageProps) {
             {/* Game over display */}
             {gameState.phase === "finished" && (
               <div className="rounded-2xl border border-amber-400/30 bg-gradient-to-br from-amber-400/10 to-transparent p-8 text-center">
-                <h2 className="text-2xl font-bold text-amber-100">Game Over!</h2>
+                <div className="flex items-center justify-center gap-3">
+                  <h2 className="text-2xl font-bold text-amber-100">Game Over!</h2>
+                  {(isResultLoading || isResultPlaying) && (
+                    <span className="flex items-center gap-1.5 text-xs text-amber-400">
+                      <span className="relative flex h-2 w-2">
+                        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75"></span>
+                        <span className="relative inline-flex h-2 w-2 rounded-full bg-amber-500"></span>
+                      </span>
+                      {isResultLoading ? "Loading..." : "Speaking"}
+                    </span>
+                  )}
+                </div>
                 <p className="mt-2 text-slate-300">
                   {players.length > 0 && (
                     <>
@@ -630,6 +729,15 @@ export default function GamePage({ params }: GamePageProps) {
                 >
                   {gameState.lastResult.isCorrect ? "Correct!" : "Wrong"}
                 </span>
+                {(isResultLoading || isResultPlaying) && (
+                  <span className="flex items-center gap-1.5 text-xs text-amber-400">
+                    <span className="relative flex h-2 w-2">
+                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75"></span>
+                      <span className="relative inline-flex h-2 w-2 rounded-full bg-amber-500"></span>
+                    </span>
+                    {isResultLoading ? "Loading..." : "Speaking"}
+                  </span>
+                )}
               </div>
               <p className="text-xs uppercase tracking-[0.3em] text-slate-400">
                 {selectedClueDetails.value} points
@@ -687,6 +795,7 @@ export default function GamePage({ params }: GamePageProps) {
         canSkip={isMyTurn}
         onSkip={handleSkip}
         canAnswer={isMyTurn}
+        isMuted={isMuted}
       />
     </div>
   );
